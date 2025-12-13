@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import wandb
 import pickle as pkl
 from utils.data_utils import OfficeDataset
 from nets.models import AlexNet
@@ -199,6 +199,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--log', action='store_true', help='whether to log')
+    parser.add_argument('--wandb', action='store_true', help='use weights and biases logging')
+    parser.add_argument('--wandb_project', type=str, default='fedbn-office', help='wandb project name')
+    parser.add_argument('--wandb_run_name', type=str, default=None, help='wandb run name')
     parser.add_argument('--test', action='store_true', help ='test the pretrained model')
     parser.add_argument('--lr', type=float, default=1e-2, help='learning rate')
     parser.add_argument('--batch', type = int, default= 32, help ='batch size')
@@ -209,6 +212,21 @@ if __name__ == '__main__':
     parser.add_argument('--save_path', type = str, default='../checkpoint/office', help='path to save the checkpoint')
     parser.add_argument('--resume', action='store_true', help ='resume training from the save path checkpoint')
     args = parser.parse_args()
+
+    if args.wandb:
+        run_name = args.wandb_run_name if args.wandb_run_name else f"{args.mode}_lr{args.lr}_batch{args.batch}"
+        wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                "mode": args.mode,
+                "learning_rate": args.lr,
+                "batch_size": args.batch,
+                "iterations": args.iters,
+                "wk_iters": args.wk_iters,
+                "mu": args.mu if args.mode.lower() == 'fedprox' else None,
+            }
+        )
 
     exp_folder = 'fed_office'
 
@@ -280,44 +298,100 @@ if __name__ == '__main__':
         for wi in range(args.wk_iters):
             print("============ Train epoch {} ============".format(wi + a_iter * args.wk_iters))
             if args.log:
-                logfile.write("============ Train epoch {} ============\n".format(wi + a_iter * args.wk_iters)) 
+                logfile.write("============ Train epoch {} ============\n".format(wi + a_iter * args.wk_iters))
 
             for client_idx, model in enumerate(models):
                 if args.mode.lower() == 'fedprox':
-                    # skip the first server model(random initialized)
                     if a_iter > 0:
-                        train_loss, train_acc = train_prox(args, model ,train_loaders[client_idx], optimizers[client_idx], loss_fun, device)
+                        train_loss, train_acc = train_prox(args, model, train_loaders[client_idx],
+                                                           optimizers[client_idx], loss_fun, device)
                     else:
-                        train_loss, train_acc = train(model, train_loaders[client_idx], optimizers[client_idx], loss_fun, device)    
+                        train_loss, train_acc = train(model, train_loaders[client_idx], optimizers[client_idx],
+                                                      loss_fun, device)
                 else:
-                    train_loss, train_acc = train(model, train_loaders[client_idx], optimizers[client_idx], loss_fun, device)
+                    train_loss, train_acc = train(model, train_loaders[client_idx], optimizers[client_idx], loss_fun,
+                                                  device)
+
+                if args.wandb:
+                    wandb.log({
+                        f"train/loss_{datasets[client_idx]}": train_loss,
+                        f"train/acc_{datasets[client_idx]}": train_acc,
+                        "epoch": wi + a_iter * args.wk_iters,
+                    })
+
         with torch.no_grad():
             # aggregation
             server_model, models = communication(args, server_model, models, client_weights)
+
             # Report loss after aggregation
+            train_losses = []
+            train_accs = []
             for client_idx, model in enumerate(models):
                 train_loss, train_acc = test(model, train_loaders[client_idx], loss_fun, device)
-                print(' Site-{:<10s}| Train Loss: {:.4f} | Train Acc: {:.4f}'.format(datasets[client_idx] ,train_loss, train_acc))
+                train_losses.append(train_loss)
+                train_accs.append(train_acc)
+                print(' Site-{:<10s}| Train Loss: {:.4f} | Train Acc: {:.4f}'.format(datasets[client_idx], train_loss,
+                                                                                     train_acc))
                 if args.log:
-                    logfile.write(' Site-{:<10s}| Train Loss: {:.4f} | Train Acc: {:.4f}\n'.format(datasets[client_idx] ,train_loss, train_acc))
+                    logfile.write(' Site-{:<10s}| Train Loss: {:.4f} | Train Acc: {:.4f}\n'.format(datasets[client_idx],
+                                                                                                   train_loss,
+                                                                                                   train_acc))
+
+            if args.wandb:
+                wandb.log({
+                    "avg/train_loss": np.mean(train_losses),
+                    "avg/train_acc": np.mean(train_accs),
+                    "communication_round": a_iter,
+                })
+
             # Validation
             val_acc_list = [None for j in range(client_num)]
+            val_loss_list = []
             for client_idx, model in enumerate(models):
                 val_loss, val_acc = test(model, val_loaders[client_idx], loss_fun, device)
                 val_acc_list[client_idx] = val_acc
-                print(' Site-{:<10s}| Val  Loss: {:.4f} | Val  Acc: {:.4f}'.format(datasets[client_idx], val_loss, val_acc), flush=True)
+                val_loss_list.append(val_loss)
+                print(' Site-{:<10s}| Val  Loss: {:.4f} | Val  Acc: {:.4f}'.format(datasets[client_idx], val_loss,
+                                                                                   val_acc), flush=True)
                 if args.log:
-                    logfile.write(' Site-{:<10s}| Val  Loss: {:.4f} | Val  Acc: {:.4f}\n'.format(datasets[client_idx], val_loss, val_acc))
+                    logfile.write(
+                        ' Site-{:<10s}| Val  Loss: {:.4f} | Val  Acc: {:.4f}\n'.format(datasets[client_idx], val_loss,
+                                                                                       val_acc))
+
+                if args.wandb:
+                    wandb.log({
+                        f"val/loss_{datasets[client_idx]}": val_loss,
+                        f"val/acc_{datasets[client_idx]}": val_acc,
+                        "communication_round": a_iter,
+                    })
+
+            if args.wandb:
+                wandb.log({
+                    "avg/val_loss": np.mean(val_loss_list),
+                    "avg/val_acc": np.mean(val_acc_list),
+                    "communication_round": a_iter,
+                })
+
             # Record best
             if np.mean(val_acc_list) > np.mean(best_acc):
                 for client_idx in range(client_num):
                     best_acc[client_idx] = val_acc_list[client_idx]
                     best_epoch = a_iter
-                    best_changed=True
-                    print(' Best site-{:<10s}| Epoch:{} | Val Acc: {:.4f}'.format(datasets[client_idx], best_epoch, best_acc[client_idx]))
+                    best_changed = True
+                    print(' Best site-{:<10s}| Epoch:{} | Val Acc: {:.4f}'.format(datasets[client_idx], best_epoch,
+                                                                                  best_acc[client_idx]))
                     if args.log:
-                        logfile.write(' Best site-{:<10s} | Epoch:{} | Val Acc: {:.4f}\n'.format(datasets[client_idx], best_epoch, best_acc[client_idx]))
-            if best_changed:     
+                        logfile.write(
+                            ' Best site-{:<10s} | Epoch:{} | Val Acc: {:.4f}\n'.format(datasets[client_idx], best_epoch,
+                                                                                       best_acc[client_idx]))
+
+                if args.wandb:
+                    wandb.log({
+                        "best_avg_val_acc": np.mean(best_acc),
+                        "best_epoch": best_epoch,
+                    })
+
+            if best_changed:
                 print(' Saving the local and server checkpoint to {}...'.format(SAVE_PATH))
                 if args.log:
                     logfile.write(' Saving the local and server checkpoint to {}...\n'.format(SAVE_PATH))
@@ -333,11 +407,33 @@ if __name__ == '__main__':
                         'a_iter': a_iter
                     }, SAVE_PATH)
                     best_changed = False
+
+                    # Test on each client's test set
+                    test_accs = []
+                    test_losses = []
                     for client_idx, datasite in enumerate(datasets):
-                        _, test_acc = test(models[client_idx], test_loaders[client_idx], loss_fun, device)
+                        test_loss, test_acc = test(models[client_idx], test_loaders[client_idx], loss_fun, device)
+                        test_accs.append(test_acc)
+                        test_losses.append(test_loss)
                         print(' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}'.format(datasite, best_epoch, test_acc))
                         if args.log:
-                            logfile.write(' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}\n'.format(datasite, best_epoch, test_acc))
+                            logfile.write(
+                                ' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}\n'.format(datasite, best_epoch,
+                                                                                           test_acc))
+
+                        if args.wandb:
+                            wandb.log({
+                                f"test/loss_{datasite}": test_loss,
+                                f"test/acc_{datasite}": test_acc,
+                                "communication_round": a_iter,
+                            })
+
+                    if args.wandb:
+                        wandb.log({
+                            "avg/test_loss": np.mean(test_losses),
+                            "avg/test_acc": np.mean(test_accs),
+                            "communication_round": a_iter,
+                        })
                 else:
                     torch.save({
                         'server_model': server_model.state_dict(),
@@ -346,13 +442,41 @@ if __name__ == '__main__':
                         'a_iter': a_iter
                     }, SAVE_PATH)
                     best_changed = False
+
+                    # Test on each client's test set
+                    test_accs = []
+                    test_losses = []
                     for client_idx, datasite in enumerate(datasets):
-                        _, test_acc = test(server_model, test_loaders[client_idx], loss_fun, device)
+                        test_loss, test_acc = test(server_model, test_loaders[client_idx], loss_fun, device)
+                        test_accs.append(test_acc)
+                        test_losses.append(test_loss)
                         print(' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}'.format(datasite, best_epoch, test_acc))
                         if args.log:
-                            logfile.write(' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}\n'.format(datasite, best_epoch, test_acc))
+                            logfile.write(
+                                ' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}\n'.format(datasite, best_epoch,
+                                                                                           test_acc))
+
+                        if args.wandb:
+                            wandb.log({
+                                f"test/loss_{datasite}": test_loss,
+                                f"test/acc_{datasite}": test_acc,
+                                "communication_round": a_iter,
+                            })
+
+                    # NEW: Log aggregated test metrics
+                    if args.wandb:
+                        wandb.log({
+                            "avg/test_loss": np.mean(test_losses),
+                            "avg/test_acc": np.mean(test_accs),
+                            "communication_round": a_iter,
+                        })
+
             if log:
                 logfile.flush()
+
     if log:
         logfile.flush()
         logfile.close()
+
+    if args.wandb:
+        wandb.finish()
