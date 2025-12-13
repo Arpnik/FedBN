@@ -97,7 +97,13 @@ class AlexNet(nn.Module):
 
     def forward(self, x):
         x = self.features(x)
+        # Handle MPS limitation with adaptive pooling
+        original_device = x.device
+        if original_device.type == 'mps':
+            x = x.cpu()
         x = self.avgpool(x)
+        if original_device.type == 'mps':
+            x = x.to(original_device)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x

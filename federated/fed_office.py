@@ -2,8 +2,12 @@
 federated learning with different aggregation strategy on office dataset
 """
 import sys, os
+
 base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_path)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.helper import get_device
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -186,7 +190,7 @@ def prepare_data(args):
     return train_loaders, val_loaders, test_loaders
 
 if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
     seed=  4
     np.random.seed(seed)
     torch.manual_seed(seed)     
@@ -315,7 +319,8 @@ if __name__ == '__main__':
                         logfile.write(' Best site-{:<10s} | Epoch:{} | Val Acc: {:.4f}\n'.format(datasets[client_idx], best_epoch, best_acc[client_idx]))
             if best_changed:     
                 print(' Saving the local and server checkpoint to {}...'.format(SAVE_PATH))
-                logfile.write(' Saving the local and server checkpoint to {}...\n'.format(SAVE_PATH))
+                if args.log:
+                    logfile.write(' Saving the local and server checkpoint to {}...\n'.format(SAVE_PATH))
                 if args.mode.lower() == 'fedbn':
                     torch.save({
                         'model_0': models[0].state_dict(),

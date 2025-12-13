@@ -2,6 +2,9 @@
 Singleset on benchmark exp.
 """
 import sys, os
+
+from utils.helper import get_device
+
 base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_path)
 
@@ -129,7 +132,7 @@ def test(data_loader,site, loss_fun, device):
     
 
 if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--percent', type = float, default= 0.1, help ='percentage of dataset to train')
