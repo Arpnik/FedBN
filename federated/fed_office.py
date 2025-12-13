@@ -4,18 +4,19 @@ Extended with configurable noise injection for robustness experiments
 """
 import sys, os
 
+from torch.utils.data import DataLoader
 base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_path)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.helper import get_device
-from utils.noise_utils import NoiseInjector, get_client_noise_config, print_noise_summary, create_mixed_domain_dataset, \
+from utils.data_utils import OfficeDataset, OfficeHomeDataset
+from utils.noise_utils import get_client_noise_config, NoiseInjector, print_noise_summary, create_mixed_domain_dataset, \
     NoisyDatasetWrapper
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
-from utils.data_utils import OfficeDataset
 from nets.models import AlexNet
 import argparse
 import time
@@ -24,6 +25,239 @@ import torchvision.transforms as transforms
 import random
 import numpy as np
 
+
+def test_on_officehome(models, server_model, args, device, mode='fedbn',
+                       client_idx=0, log_to_wandb=False, communication_round=None):
+    """
+    Test trained model(s) on Office-Home dataset for generalization evaluation
+
+    Args:
+        models: List of client models (for FedBN)
+        server_model: Server model (for FedAvg/FedProx)
+        args: Arguments containing officehome_path, batch size, etc.
+        device: Computing device
+        mode: Training mode ('fedbn', 'fedavg', 'fedprox')
+        client_idx: Which client's model to use for testing (0-3)
+        log_to_wandb: Whether to log results to wandb
+        communication_round: Current communication round (for logging)
+
+    Returns:
+        dict: Dictionary with results for each Office-Home domain
+    """
+
+    # Check if Office-Home path is provided
+    if not hasattr(args, 'officehome_path') or args.officehome_path is None:
+        print("Office-Home path not provided, skipping Office-Home evaluation")
+        return None
+
+    if not os.path.exists(args.officehome_path):
+        print(f"Office-Home path {args.officehome_path} does not exist, skipping evaluation")
+        return None
+
+    # Select model based on mode
+    if mode.lower() == 'fedbn':
+        if client_idx >= len(models):
+            print(f"Warning: client_idx {client_idx} out of range, using client 0")
+            client_idx = 0
+        test_model = models[client_idx]
+        model_name = f"Client_{client_idx}"
+    else:
+        test_model = server_model
+        model_name = "Server"
+
+    # Test transform (same as Office-Caltech test transform)
+    transform_test = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.ToTensor(),
+    ])
+
+    # Office-Home domains
+    officehome_domains = ['Art', 'Clipart', 'Product', 'Real World']
+
+    # Loss function
+    loss_fun = nn.CrossEntropyLoss()
+
+    # Store results
+    results = {}
+    all_losses = []
+    all_accs = []
+
+    print("\n" + "=" * 70)
+    print(f"OFFICE-HOME EVALUATION ({model_name})")
+    print("=" * 70)
+
+    test_model.eval()
+    with torch.no_grad():
+        for domain in officehome_domains:
+            try:
+                # Load Office-Home domain
+                officehome_dataset = OfficeHomeDataset(
+                    args.officehome_path,
+                    domain,
+                    transform=transform_test
+                )
+
+                # Create data loader
+                officehome_loader = DataLoader(
+                    officehome_dataset,
+                    batch_size=args.batch,
+                    shuffle=False,
+                    num_workers=2
+                )
+
+                # Test on this domain
+                loss_all = 0
+                total = 0
+                correct = 0
+
+                for data, target in officehome_loader:
+                    data = data.to(device)
+                    target = target.to(device)
+
+                    output = test_model(data)
+                    loss = loss_fun(output, target)
+
+                    loss_all += loss.item()
+                    total += target.size(0)
+                    pred = output.data.max(1)[1]
+                    correct += pred.eq(target.view(-1)).sum().item()
+
+                # Calculate metrics
+                avg_loss = loss_all / len(officehome_loader)
+                accuracy = correct / total
+
+                # Store results
+                results[domain] = {
+                    'loss': avg_loss,
+                    'accuracy': accuracy,
+                    'total_samples': total
+                }
+
+                all_losses.append(avg_loss)
+                all_accs.append(accuracy)
+
+                # Print results
+                print(f"  {domain:<12s} | Loss: {avg_loss:.4f} | Acc: {accuracy:.4f} | Samples: {total}")
+
+                # Log to wandb if enabled
+                if log_to_wandb and wandb.run is not None:
+                    log_dict = {
+                        f"officehome/{domain}_loss": avg_loss,
+                        f"officehome/{domain}_acc": accuracy,
+                    }
+                    if communication_round is not None:
+                        log_dict["communication_round"] = communication_round
+                    wandb.log(log_dict)
+
+            except Exception as e:
+                print(f"  {domain:<12s} | Error: {str(e)}")
+                results[domain] = {'error': str(e)}
+
+    # Calculate average across all domains
+    if all_accs:
+        avg_loss = np.mean(all_losses)
+        avg_acc = np.mean(all_accs)
+
+        results['average'] = {
+            'loss': avg_loss,
+            'accuracy': avg_acc
+        }
+
+        print(f"  {'Average':<12s} | Loss: {avg_loss:.4f} | Acc: {avg_acc:.4f}")
+
+        # Log average to wandb
+        if log_to_wandb and wandb.run is not None:
+            log_dict = {
+                "officehome/avg_loss": avg_loss,
+                "officehome/avg_acc": avg_acc,
+            }
+            if communication_round is not None:
+                log_dict["communication_round"] = communication_round
+            wandb.log(log_dict)
+
+    print("=" * 70 + "\n")
+
+    return results
+
+
+def test_all_clients_on_officehome(models, server_model, args, device, mode='fedbn',
+                                   log_to_wandb=False, communication_round=None):
+    """
+    Test all client models on Office-Home to compare generalization
+
+    Args:
+        models: List of client models
+        server_model: Server model
+        args: Arguments
+        device: Computing device
+        mode: Training mode
+        log_to_wandb: Whether to log to wandb
+        communication_round: Current round
+
+    Returns:
+        dict: Results for each client on each Office-Home domain
+    """
+
+    if mode.lower() != 'fedbn':
+        # For FedAvg/FedProx, all clients use server model
+        print("Testing server model on Office-Home...")
+        return test_on_officehome(
+            models, server_model, args, device, mode,
+            client_idx=0, log_to_wandb=log_to_wandb,
+            communication_round=communication_round
+        )
+
+    # For FedBN, test each client model
+    all_results = {}
+
+    print("\n" + "=" * 70)
+    print("OFFICE-HOME EVALUATION - ALL CLIENTS")
+    print("=" * 70)
+
+    for client_idx in range(len(models)):
+        print(f"\nTesting Client {client_idx}:")
+        results = test_on_officehome(
+            models, server_model, args, device, mode,
+            client_idx=client_idx, log_to_wandb=False,  # Log manually below
+            communication_round=communication_round
+        )
+        all_results[f'client_{client_idx}'] = results
+
+        # Log to wandb with client prefix
+        if log_to_wandb and wandb.run is not None and results:
+            for domain, metrics in results.items():
+                if 'error' not in metrics:
+                    log_dict = {
+                        f"officehome/client{client_idx}_{domain}_acc": metrics['accuracy'],
+                    }
+                    if communication_round is not None:
+                        log_dict["communication_round"] = communication_round
+                    wandb.log(log_dict)
+
+    # Calculate best client per domain
+    print("\nBest Client Performance per Domain:")
+    print("-" * 70)
+
+    officehome_domains = ['Art', 'Clipart', 'Product', 'RealWorld', 'average']
+    for domain in officehome_domains:
+        best_client = None
+        best_acc = 0
+
+        for client_idx in range(len(models)):
+            client_key = f'client_{client_idx}'
+            if client_key in all_results and domain in all_results[client_key]:
+                if 'accuracy' in all_results[client_key][domain]:
+                    acc = all_results[client_key][domain]['accuracy']
+                    if acc > best_acc:
+                        best_acc = acc
+                        best_client = client_idx
+
+        if best_client is not None:
+            print(f"  {domain:<12s} | Best: Client {best_client} with {best_acc:.4f}")
+
+    print("=" * 70 + "\n")
+
+    return all_results
 
 def train(model, data_loader, optimizer, loss_fun, device):
     model.train()
@@ -175,6 +409,7 @@ def prepare_data(args):
     base_trainsets = [amazon_trainset, caltech_trainset, dslr_trainset, webcam_trainset]
     base_valsets = [amazon_valset, caltech_valset, dslr_valset, webcam_valset]
 
+    # ============ NEW: Apply noise configuration ============
     # Initialize noise injector with seed for reproducibility
     noise_injector = NoiseInjector(seed=args.noise_seed)
 
@@ -279,6 +514,9 @@ if __name__ == '__main__':
     parser.add_argument('--mu', type=float, default=1e-3, help='The hyper parameter for fedprox')
     parser.add_argument('--save_path', type=str, default='../checkpoint/office', help='path to save the checkpoint')
     parser.add_argument('--resume', action='store_true', help='resume training from the save path checkpoint')
+    parser.add_argument('--officehome_path', default='../data/OfficeHomeDataset_10072016', help='path ot office home dataset for testing')
+    parser.add_argument('--officehome_test_client', type=int, default=0, help='0-3 for Amazon, Caltech, DSLR, Webcam respectively')
+
 
     # ============ Noise configuration arguments ============
     parser.add_argument('--noise_seed', type=int, default=42,
@@ -337,6 +575,8 @@ if __name__ == '__main__':
                 "noise_seed": args.noise_seed,
                 "gaussian_std": args.gaussian_std,
                 "client_noise": args.client_noise,
+                "officehome_path": args.officehome_path,
+                "officehome_test_client": args.officehome_test_client,
             }
         )
 
@@ -587,6 +827,29 @@ if __name__ == '__main__':
 
             if log:
                 logfile.flush()
+
+    # ============ Test on Office-Home dataset ============
+    if args.officehome_path is not None:
+        print("\n" + "="*70)
+        print("Testing on Office-Home Dataset (Out-of-Distribution)")
+        print("="*70)
+
+        # For FedAvg/FedProx, use server model
+        officehome_results = test_all_clients_on_officehome(
+            models=models,
+            server_model=server_model,
+            args=args,
+            device=device,
+            mode=args.mode,
+            log_to_wandb=args.wandb
+        )
+
+        if officehome_results and args.log:
+            logfile.write("\n=== Office-Home Results ===\n")
+            for domain, metrics in officehome_results.items():
+                if 'accuracy' in metrics:
+                    logfile.write(f"  {domain}: Acc={metrics['accuracy']:.4f}, Loss={metrics['loss']:.4f}\n")
+    # ============ END Office-Home Testing ============
 
     if log:
         logfile.flush()
