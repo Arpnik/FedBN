@@ -492,6 +492,155 @@ def prepare_data(args):
 
     return train_loaders, val_loaders, test_loaders
 
+
+def parse_client_datasets(client_datasets_str):
+    """
+    Parse client dataset assignment string.
+
+    Args:
+        client_datasets_str: String like "0:1:2:3" or "0,1:2:3"
+
+    Returns:
+        List of lists, e.g., [[0], [1], [2], [3]] or [[0,1], [2], [3]]
+    """
+    clients = client_datasets_str.split(':')
+    return [[int(d) for d in client.split(',')] for client in clients]
+
+def prepare_data_configurable(args):
+    """
+    Modified prepare_data function with configurable client-dataset assignment.
+    Replace your existing prepare_data function with this.
+    """
+    data_base_path = '../data'
+    transform_office = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation((-30, 30)),
+        transforms.ToTensor(),
+    ])
+
+    transform_test = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.ToTensor(),
+    ])
+
+    # Load ALL base datasets
+    all_datasets_train = [
+        OfficeDataset(data_base_path, 'amazon', transform=transform_office),
+        OfficeDataset(data_base_path, 'caltech', transform=transform_office),
+        OfficeDataset(data_base_path, 'dslr', transform=transform_office),
+        OfficeDataset(data_base_path, 'webcam', transform=transform_office)
+    ]
+
+    all_datasets_test = [
+        OfficeDataset(data_base_path, 'amazon', transform=transform_test, train=False),
+        OfficeDataset(data_base_path, 'caltech', transform=transform_test, train=False),
+        OfficeDataset(data_base_path, 'dslr', transform=transform_test, train=False),
+        OfficeDataset(data_base_path, 'webcam', transform=transform_test, train=False)
+    ]
+
+    # Parse client-dataset assignment
+    client_dataset_assignment = parse_client_datasets(args.client_datasets)
+
+    # Create train/val splits for all datasets
+    min_data_len = min([len(ds) for ds in all_datasets_train])
+    val_len = int(min_data_len * 0.4)
+    min_data_len = int(min_data_len * 0.5)
+
+    all_trainsets = []
+    all_valsets = []
+
+    for ds in all_datasets_train:
+        valset = torch.utils.data.Subset(ds, list(range(len(ds)))[-val_len:])
+        trainset = torch.utils.data.Subset(ds, list(range(min_data_len)))
+        all_trainsets.append(trainset)
+        all_valsets.append(valset)
+
+    # Initialize noise injector
+    noise_injector = NoiseInjector(seed=args.noise_seed)
+    datasets_names = ['Amazon', 'Caltech', 'DSLR', 'Webcam']
+
+    # Prepare data for each client based on assignment
+    final_trainsets = []
+    final_valsets = []
+    final_testsets = []
+    client_names = []
+
+    for client_idx, dataset_indices in enumerate(client_dataset_assignment):
+        # Get noise config for this client
+        config = get_client_noise_config(client_idx, args)
+
+        # Combine datasets if multiple assigned to this client
+        if len(dataset_indices) == 1:
+            ds_idx = dataset_indices[0]
+            trainset = all_trainsets[ds_idx]
+            valset = all_valsets[ds_idx]
+            testset = all_datasets_test[ds_idx]
+            client_name = datasets_names[ds_idx]
+        else:
+            # Merge multiple datasets
+            trainset = torch.utils.data.ConcatDataset([all_trainsets[i] for i in dataset_indices])
+            valset = torch.utils.data.ConcatDataset([all_valsets[i] for i in dataset_indices])
+            testset = torch.utils.data.ConcatDataset([all_datasets_test[i] for i in dataset_indices])
+            client_name = '+'.join([datasets_names[i] for i in dataset_indices])
+
+        # Handle domain mixing (if configured)
+        if config['mixed_domains'] is not None:
+            mix_idx = config['mixed_domains']
+            trainset = create_mixed_domain_dataset(trainset, all_trainsets[mix_idx])
+            valset = create_mixed_domain_dataset(valset, all_valsets[mix_idx])
+            client_name += f"+Mixed{datasets_names[mix_idx]}"
+
+        # Apply noise wrapping
+        if config['input_noise_ratio'] > 0 or config['label_noise_ratio'] > 0:
+            trainset = NoisyDatasetWrapper(
+                trainset, noise_injector,
+                input_noise_ratio=config['input_noise_ratio'],
+                label_noise_ratio=config['label_noise_ratio'],
+                num_classes=31,
+                gaussian_std=config['gaussian_std']
+            )
+            valset = NoisyDatasetWrapper(
+                valset, noise_injector,
+                input_noise_ratio=config['input_noise_ratio'],
+                label_noise_ratio=config['label_noise_ratio'],
+                num_classes=31,
+                gaussian_std=config['gaussian_std']
+            )
+
+        final_trainsets.append(trainset)
+        final_valsets.append(valset)
+        final_testsets.append(testset)
+        client_names.append(client_name)
+
+    # Print configuration
+    print("\n" + "=" * 70)
+    print("CLIENT CONFIGURATION")
+    print("=" * 70)
+    for i, (name, indices) in enumerate(zip(client_names, client_dataset_assignment)):
+        dataset_str = ', '.join([datasets_names[idx] for idx in indices])
+        print(f"Client {i}: {name} (datasets: {dataset_str})")
+    print("=" * 70 + "\n")
+
+    # Create data loaders
+    train_loaders = [
+        torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=True)
+        for ds in final_trainsets
+    ]
+
+    val_loaders = [
+        torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=False)
+        for ds in final_valsets
+    ]
+
+    test_loaders = [
+        torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=False)
+        for ds in final_testsets
+    ]
+
+    return train_loaders, val_loaders, test_loaders, client_names
+
+
 if __name__ == '__main__':
     device = get_device()
     seed = 4
@@ -535,6 +684,10 @@ if __name__ == '__main__':
                        help='Label noise ratio for client 0 (Amazon)')
     parser.add_argument('--client0_mix_with', type=int, default=None,
                        help='Mix client 0 with another client (0-3)')
+    parser.add_argument('--client_datasets', type=str,
+                        default='0:1:2:3',
+                        help='Dataset assignment for each client. Format: "0:1:2:3" or "0,1:2:3" for multi-dataset clients. '
+                             'Datasets: 0=Amazon, 1=Caltech, 2=DSLR, 3=Webcam')
 
     parser.add_argument('--client1_input_noise', type=float, default=0.0,
                        help='Input noise ratio for client 1 (Caltech)')
@@ -600,13 +753,11 @@ if __name__ == '__main__':
         logfile.write('    noise_seed: {}\n'.format(args.noise_seed))
         logfile.write('    client_noise: {}\n'.format(args.client_noise))
 
-    train_loaders, val_loaders, test_loaders = prepare_data(args)
+    train_loaders, val_loaders, test_loaders, datasets = prepare_data_configurable(args)
 
     # setup model
     server_model = AlexNet().to(device)
     loss_fun = nn.CrossEntropyLoss()
-    # name of each datasets
-    datasets = ['Amazon', 'Caltech', 'DSLR', 'Webcam']
     # federated client number
     client_num = len(datasets)
     client_weights = [1/client_num for i in range(client_num)]
@@ -751,16 +902,16 @@ if __name__ == '__main__':
                 if args.log:
                     logfile.write(' Saving the local and server checkpoint to {}...\n'.format(SAVE_PATH))
                 if args.mode.lower() == 'fedbn':
-                    torch.save({
-                        'model_0': models[0].state_dict(),
-                        'model_1': models[1].state_dict(),
-                        'model_2': models[2].state_dict(),
-                        'model_3': models[3].state_dict(),
+                    checkpoint = {
                         'server_model': server_model.state_dict(),
                         'best_epoch': best_epoch,
                         'best_acc': best_acc,
                         'a_iter': a_iter
-                    }, SAVE_PATH)
+                    }
+                    # Dynamically save all client models
+                    for client_idx in range(client_num):
+                        checkpoint[f'model_{client_idx}'] = models[client_idx].state_dict()
+                    torch.save(checkpoint, SAVE_PATH)
                     best_changed = False
 
                     # Test on each client's test set
