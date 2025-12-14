@@ -10,8 +10,7 @@ sys.path.append(base_path)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.helper import get_device
 from utils.data_utils import OfficeDataset, OfficeHomeDataset
-from utils.noise_utils import get_client_noise_config, NoiseInjector, print_noise_summary, create_mixed_domain_dataset, \
-    NoisyDatasetWrapper
+from utils.noise_utils import get_client_noise_config, NoiseInjector, print_noise_summary, NoisyDatasetWrapper
 
 import torch
 import torch.nn as nn
@@ -360,139 +359,6 @@ def communication(args, server_model, models, client_weights):
                         models[client_idx].state_dict()[key].data.copy_(server_model.state_dict()[key])
     return server_model, models
 
-def prepare_data(args):
-    """
-    Prepare data with optional noise injection and domain mixing
-    Modified to support noise configuration per client
-    """
-    data_base_path = '../data'
-    transform_office = transforms.Compose([
-            transforms.Resize([256, 256]),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation((-30,30)),
-            transforms.ToTensor(),
-    ])
-
-    transform_test = transforms.Compose([
-            transforms.Resize([256, 256]),
-            transforms.ToTensor(),
-    ])
-
-    # Load base datasets
-    amazon_trainset = OfficeDataset(data_base_path, 'amazon', transform=transform_office)
-    amazon_testset = OfficeDataset(data_base_path, 'amazon', transform=transform_test, train=False)
-    caltech_trainset = OfficeDataset(data_base_path, 'caltech', transform=transform_office)
-    caltech_testset = OfficeDataset(data_base_path, 'caltech', transform=transform_test, train=False)
-    dslr_trainset = OfficeDataset(data_base_path, 'dslr', transform=transform_office)
-    dslr_testset = OfficeDataset(data_base_path, 'dslr', transform=transform_test, train=False)
-    webcam_trainset = OfficeDataset(data_base_path, 'webcam', transform=transform_office)
-    webcam_testset = OfficeDataset(data_base_path, 'webcam', transform=transform_test, train=False)
-
-    # Create train/val splits
-    min_data_len = min(len(amazon_trainset), len(caltech_trainset), len(dslr_trainset), len(webcam_trainset))
-    val_len = int(min_data_len * 0.4)
-    min_data_len = int(min_data_len * 0.5)
-
-    amazon_valset = torch.utils.data.Subset(amazon_trainset, list(range(len(amazon_trainset)))[-val_len:])
-    amazon_trainset = torch.utils.data.Subset(amazon_trainset, list(range(min_data_len)))
-
-    caltech_valset = torch.utils.data.Subset(caltech_trainset, list(range(len(caltech_trainset)))[-val_len:])
-    caltech_trainset = torch.utils.data.Subset(caltech_trainset, list(range(min_data_len)))
-
-    dslr_valset = torch.utils.data.Subset(dslr_trainset, list(range(len(dslr_trainset)))[-val_len:])
-    dslr_trainset = torch.utils.data.Subset(dslr_trainset, list(range(min_data_len)))
-
-    webcam_valset = torch.utils.data.Subset(webcam_trainset, list(range(len(webcam_trainset)))[-val_len:])
-    webcam_trainset = torch.utils.data.Subset(webcam_trainset, list(range(min_data_len)))
-
-    # Store base datasets in list for easy access
-    base_trainsets = [amazon_trainset, caltech_trainset, dslr_trainset, webcam_trainset]
-    base_valsets = [amazon_valset, caltech_valset, dslr_valset, webcam_valset]
-
-    # ============ NEW: Apply noise configuration ============
-    # Initialize noise injector with seed for reproducibility
-    noise_injector = NoiseInjector(seed=args.noise_seed)
-
-    # Get noise configurations for each client
-    noise_configs = [get_client_noise_config(i, args) for i in range(4)]
-
-    # Print noise summary
-    datasets_names = ['Amazon', 'Caltech', 'DSLR', 'Webcam']
-    print_noise_summary(datasets_names, noise_configs)
-
-    # Apply domain mixing and noise
-    final_trainsets = []
-    final_valsets = []
-
-    for client_idx in range(4):
-        config = noise_configs[client_idx]
-
-        # Handle domain mixing
-        if config['mixed_domains'] is not None:
-            mix_idx = config['mixed_domains']
-            trainset = create_mixed_domain_dataset(
-                base_trainsets[client_idx],
-                base_trainsets[mix_idx]
-            )
-            valset = create_mixed_domain_dataset(
-                base_valsets[client_idx],
-                base_valsets[mix_idx]
-            )
-            print(f"Client {client_idx}: Mixed {datasets_names[client_idx]} + {datasets_names[mix_idx]}")
-        else:
-            trainset = base_trainsets[client_idx]
-            valset = base_valsets[client_idx]
-
-        # Apply noise wrapping
-        if config['input_noise_ratio'] > 0 or config['label_noise_ratio'] > 0:
-            trainset = NoisyDatasetWrapper(
-                trainset,
-                noise_injector,
-                input_noise_ratio=config['input_noise_ratio'],
-                label_noise_ratio=config['label_noise_ratio'],
-                num_classes=31,
-                gaussian_std=config['gaussian_std']
-            )
-            valset = NoisyDatasetWrapper(
-                valset,
-                noise_injector,
-                input_noise_ratio=config['input_noise_ratio'],
-                label_noise_ratio=config['label_noise_ratio'],
-                num_classes=31,
-                gaussian_std=config['gaussian_std']
-            )
-
-        final_trainsets.append(trainset)
-        final_valsets.append(valset)
-
-    # ============ END NEW CODE ============
-
-    # Create data loaders
-    train_loaders = [
-        torch.utils.data.DataLoader(final_trainsets[0], batch_size=args.batch, shuffle=True),
-        torch.utils.data.DataLoader(final_trainsets[1], batch_size=args.batch, shuffle=True),
-        torch.utils.data.DataLoader(final_trainsets[2], batch_size=args.batch, shuffle=True),
-        torch.utils.data.DataLoader(final_trainsets[3], batch_size=args.batch, shuffle=True)
-    ]
-
-    val_loaders = [
-        torch.utils.data.DataLoader(final_valsets[0], batch_size=args.batch, shuffle=False),
-        torch.utils.data.DataLoader(final_valsets[1], batch_size=args.batch, shuffle=False),
-        torch.utils.data.DataLoader(final_valsets[2], batch_size=args.batch, shuffle=False),
-        torch.utils.data.DataLoader(final_valsets[3], batch_size=args.batch, shuffle=False)
-    ]
-
-    # Test loaders remain clean (no noise)
-    test_loaders = [
-        torch.utils.data.DataLoader(amazon_testset, batch_size=args.batch, shuffle=False),
-        torch.utils.data.DataLoader(caltech_testset, batch_size=args.batch, shuffle=False),
-        torch.utils.data.DataLoader(dslr_testset, batch_size=args.batch, shuffle=False),
-        torch.utils.data.DataLoader(webcam_testset, batch_size=args.batch, shuffle=False)
-    ]
-
-    return train_loaders, val_loaders, test_loaders
-
-
 def parse_client_datasets(client_datasets_str):
     """
     Parse client dataset assignment string.
@@ -583,13 +449,6 @@ def prepare_data_configurable(args):
             valset = torch.utils.data.ConcatDataset([all_valsets[i] for i in dataset_indices])
             testset = torch.utils.data.ConcatDataset([all_datasets_test[i] for i in dataset_indices])
             client_name = '+'.join([datasets_names[i] for i in dataset_indices])
-
-        # Handle domain mixing (if configured)
-        if config['mixed_domains'] is not None:
-            mix_idx = config['mixed_domains']
-            trainset = create_mixed_domain_dataset(trainset, all_trainsets[mix_idx])
-            valset = create_mixed_domain_dataset(valset, all_valsets[mix_idx])
-            client_name += f"+Mixed{datasets_names[mix_idx]}"
 
         # Apply noise wrapping
         if config['input_noise_ratio'] > 0 or config['label_noise_ratio'] > 0:
@@ -979,7 +838,6 @@ if __name__ == '__main__':
             if log:
                 logfile.flush()
 
-    # ============ Test on Office-Home dataset ============
     if args.officehome_path is not None:
         print("\n" + "="*70)
         print("Testing on Office-Home Dataset (Out-of-Distribution)")
@@ -1000,7 +858,6 @@ if __name__ == '__main__':
             for domain, metrics in officehome_results.items():
                 if 'accuracy' in metrics:
                     logfile.write(f"  {domain}: Acc={metrics['accuracy']:.4f}, Loss={metrics['loss']:.4f}\n")
-    # ============ END Office-Home Testing ============
 
     if log:
         logfile.flush()

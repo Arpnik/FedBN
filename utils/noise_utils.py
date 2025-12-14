@@ -141,22 +141,6 @@ class NoisyDatasetWrapper(torch.utils.data.Dataset):
         return data, label
 
 
-def create_mixed_domain_dataset(dataset1, dataset2, transform=None):
-    """
-    Create a mixed domain dataset by combining two datasets
-
-    Args:
-        dataset1: First dataset
-        dataset2: Second dataset
-        transform: Optional transform to apply
-
-    Returns:
-        Combined dataset
-    """
-    from torch.utils.data import ConcatDataset
-    return ConcatDataset([dataset1, dataset2])
-
-
 def get_client_noise_config(client_idx, args):
     """
     Get noise configuration for a specific client based on args

@@ -3,7 +3,6 @@ base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_path)
 
 import numpy as np
-import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 from PIL import Image
