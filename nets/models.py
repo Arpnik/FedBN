@@ -3,6 +3,26 @@ import torch.nn as nn
 import torch.nn.functional as func
 from collections import OrderedDict
 
+def get_norm(norm_type, num_features, num_groups=32, dim=2):
+    """
+    dim = 2 -> Conv layers
+    dim = 1 -> FC layers
+    """
+    if norm_type == 'bn':
+        return nn.BatchNorm2d(num_features) if dim == 2 else nn.BatchNorm1d(num_features)
+
+    elif norm_type == 'gn':
+        # GroupNorm does NOT depend on batch size (good for FL)
+        return nn.GroupNorm(num_groups=num_groups, num_channels=num_features)
+
+    elif norm_type == 'ln':
+        return nn.LayerNorm(num_features)
+
+    elif norm_type == 'none':
+        return nn.Identity()
+
+    else:
+        raise ValueError(f"Unknown norm type: {norm_type}")
 
 class DigitModel(nn.Module):
     """
@@ -51,30 +71,30 @@ class AlexNet(nn.Module):
     """
     used for DomainNet and Office-Caltech10
     """
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, norm='bn', num_groups=32):
         super(AlexNet, self).__init__()
         self.features = nn.Sequential(
             OrderedDict([
                 ('conv1', nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2)),
-                ('bn1', nn.BatchNorm2d(64)),
+                ('norm1', get_norm(norm, 64, num_groups, dim=2)),
                 ('relu1', nn.ReLU(inplace=True)),
                 ('maxpool1', nn.MaxPool2d(kernel_size=3, stride=2)),
 
                 ('conv2', nn.Conv2d(64, 192, kernel_size=5, padding=2)),
-                ('bn2', nn.BatchNorm2d(192)),
+                ('norm2', get_norm(norm, 192, num_groups, dim=2)),
                 ('relu2', nn.ReLU(inplace=True)),
                 ('maxpool2', nn.MaxPool2d(kernel_size=3, stride=2)),
 
                 ('conv3', nn.Conv2d(192, 384, kernel_size=3, padding=1)),
-                ('bn3', nn.BatchNorm2d(384)),
+                ('norm3', get_norm(norm, 384, num_groups, dim=2)),
                 ('relu3', nn.ReLU(inplace=True)),
 
                 ('conv4', nn.Conv2d(384, 256, kernel_size=3, padding=1)),
-                ('bn4', nn.BatchNorm2d(256)),
+                ('norm4', get_norm(norm, 256, num_groups, dim=2)),
                 ('relu4', nn.ReLU(inplace=True)),
 
                 ('conv5', nn.Conv2d(256, 256, kernel_size=3, padding=1)),
-                ('bn5', nn.BatchNorm2d(256)),
+                ('norm5', get_norm(norm, 256, num_groups, dim=2)),
                 ('relu5', nn.ReLU(inplace=True)),
                 ('maxpool5', nn.MaxPool2d(kernel_size=3, stride=2)),
             ])
@@ -84,11 +104,11 @@ class AlexNet(nn.Module):
         self.classifier = nn.Sequential(
             OrderedDict([
                 ('fc1', nn.Linear(256 * 6 * 6, 4096)),
-                ('bn6', nn.BatchNorm1d(4096)),
+                ('norm6', get_norm(norm, 4096, num_groups, dim=1)),
                 ('relu6', nn.ReLU(inplace=True)),
 
                 ('fc2', nn.Linear(4096, 4096)),
-                ('bn7', nn.BatchNorm1d(4096)),
+                ('norm7', get_norm(norm, 4096, num_groups, dim=1)),
                 ('relu7', nn.ReLU(inplace=True)),
             
                 ('fc3', nn.Linear(4096, num_classes)),

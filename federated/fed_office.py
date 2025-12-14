@@ -293,7 +293,7 @@ def communication(args, server_model, models, client_weights):
         # aggregate params
         if args.mode.lower() == 'fedbn':
             for key in server_model.state_dict().keys():
-                if 'bn' not in key:
+                if 'norm' not in key:
                     temp = torch.zeros_like(server_model.state_dict()[key], dtype=torch.float32)
                     for client_idx in range(client_num):
                         temp += client_weights[client_idx] * models[client_idx].state_dict()[key]
@@ -527,6 +527,7 @@ def get_argument_parser():
                         help='path ot office home dataset for testing')
     parser.add_argument('--officehome_test_client', type=int, default=0,
                         help='0-3 for Amazon, Caltech, DSLR, Webcam respectively')
+    parser.add_argument('--norm', type=str, default='bn', choices=['bn', 'gn', 'ln', 'none'])
 
     # ============ Noise configuration arguments ============
     parser.add_argument('--noise_seed', type=int, default=42,
@@ -621,7 +622,7 @@ if __name__ == '__main__':
     officehome_loaders = load_officehome_data(args)
 
     # setup model
-    server_model = AlexNet().to(device)
+    server_model = AlexNet(norm=args.norm).to(device)
     loss_fun = nn.CrossEntropyLoss()
     # federated client number
     client_num = len(datasets)
