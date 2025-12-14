@@ -25,7 +25,7 @@ import random
 import numpy as np
 
 
-def test_on_officehome(models, server_model, args, device, mode='fedbn',
+def test_on_officehome(models, server_model, officehome_loaders, args, device, mode='fedbn',
                        client_idx=0, log_to_wandb=False, communication_round=None):
     """
     Test trained model(s) on Office-Home dataset for generalization evaluation
@@ -33,7 +33,8 @@ def test_on_officehome(models, server_model, args, device, mode='fedbn',
     Args:
         models: List of client models (for FedBN)
         server_model: Server model (for FedAvg/FedProx)
-        args: Arguments containing officehome_path, batch size, etc.
+        officehome_loaders: Dict of Office-Home data loaders (passed from main)
+        args: Arguments containing batch size, etc.
         device: Computing device
         mode: Training mode ('fedbn', 'fedavg', 'fedprox')
         client_idx: Which client's model to use for testing (0-3)
@@ -44,13 +45,9 @@ def test_on_officehome(models, server_model, args, device, mode='fedbn',
         dict: Dictionary with results for each Office-Home domain
     """
 
-    # Check if Office-Home path is provided
-    if not hasattr(args, 'officehome_path') or args.officehome_path is None:
-        print("Office-Home path not provided, skipping Office-Home evaluation")
-        return None
-
-    if not os.path.exists(args.officehome_path):
-        print(f"Office-Home path {args.officehome_path} does not exist, skipping evaluation")
+    # Check if Office-Home loaders are provided
+    if officehome_loaders is None:
+        print("Office-Home loaders not provided, skipping Office-Home evaluation")
         return None
 
     # Select model based on mode
@@ -63,12 +60,6 @@ def test_on_officehome(models, server_model, args, device, mode='fedbn',
     else:
         test_model = server_model
         model_name = "Server"
-
-    # Test transform (same as Office-Caltech test transform)
-    transform_test = transforms.Compose([
-        transforms.Resize([256, 256]),
-        transforms.ToTensor(),
-    ])
 
     # Office-Home domains
     officehome_domains = ['Art', 'Clipart', 'Product', 'Real World']
@@ -89,20 +80,8 @@ def test_on_officehome(models, server_model, args, device, mode='fedbn',
     with torch.no_grad():
         for domain in officehome_domains:
             try:
-                # Load Office-Home domain
-                officehome_dataset = OfficeHomeDataset(
-                    args.officehome_path,
-                    domain,
-                    transform=transform_test
-                )
-
-                # Create data loader
-                officehome_loader = DataLoader(
-                    officehome_dataset,
-                    batch_size=args.batch,
-                    shuffle=False,
-                    num_workers=2
-                )
+                # Get the loader for this domain
+                officehome_loader = officehome_loaders[domain]
 
                 # Test on this domain
                 loss_all = 0
@@ -179,7 +158,7 @@ def test_on_officehome(models, server_model, args, device, mode='fedbn',
     return results
 
 
-def test_all_clients_on_officehome(models, server_model, args, device, mode='fedbn',
+def test_all_clients_on_officehome(models, server_model, officehome_loaders, args, device, mode='fedbn',
                                    log_to_wandb=False, communication_round=None):
     """
     Test all client models on Office-Home to compare generalization
@@ -187,6 +166,7 @@ def test_all_clients_on_officehome(models, server_model, args, device, mode='fed
     Args:
         models: List of client models
         server_model: Server model
+        officehome_loaders: Dict of Office-Home data loaders
         args: Arguments
         device: Computing device
         mode: Training mode
@@ -201,7 +181,7 @@ def test_all_clients_on_officehome(models, server_model, args, device, mode='fed
         # For FedAvg/FedProx, all clients use server model
         print("Testing server model on Office-Home...")
         return test_on_officehome(
-            models, server_model, args, device, mode,
+            models, server_model, officehome_loaders, args, device, mode,
             client_idx=0, log_to_wandb=log_to_wandb,
             communication_round=communication_round
         )
@@ -216,7 +196,7 @@ def test_all_clients_on_officehome(models, server_model, args, device, mode='fed
     for client_idx in range(len(models)):
         print(f"\nTesting Client {client_idx}:")
         results = test_on_officehome(
-            models, server_model, args, device, mode,
+            models, server_model, officehome_loaders, args, device, mode,
             client_idx=client_idx, log_to_wandb=False,  # Log manually below
             communication_round=communication_round
         )
@@ -237,7 +217,7 @@ def test_all_clients_on_officehome(models, server_model, args, device, mode='fed
     print("\nBest Client Performance per Domain:")
     print("-" * 70)
 
-    officehome_domains = ['Art', 'Clipart', 'Product', 'RealWorld', 'average']
+    officehome_domains = ['Art', 'Clipart', 'Product', 'Real World', 'average']
     for domain in officehome_domains:
         best_client = None
         best_acc = 0
@@ -500,14 +480,58 @@ def prepare_data_configurable(args):
     return train_loaders, val_loaders, test_loaders, client_names
 
 
-if __name__ == '__main__':
-    device = get_device()
-    seed = 4
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    random.seed(seed)
+def load_officehome_data(args):
+    """
+    Load Office-Home datasets if path is provided
 
+    Args:
+        args: Arguments containing officehome_path and batch size
+
+    Returns:
+        dict: Dictionary of DataLoaders for each Office-Home domain, or None
+    """
+    if not hasattr(args, 'officehome_path') or args.officehome_path is None:
+        return None
+
+    if not os.path.exists(args.officehome_path):
+        print(f"Office-Home path {args.officehome_path} does not exist")
+        return None
+
+    transform_test = transforms.Compose([
+        transforms.Resize([256, 256]),
+        transforms.ToTensor(),
+    ])
+
+    officehome_domains = ['Art', 'Clipart', 'Product', 'Real World']
+    officehome_loaders = {}
+
+    print("\n" + "=" * 70)
+    print("LOADING OFFICE-HOME DATASETS")
+    print("=" * 70)
+
+    for domain in officehome_domains:
+        try:
+            dataset = OfficeHomeDataset(
+                args.officehome_path,
+                domain,
+                transform=transform_test
+            )
+            loader = DataLoader(
+                dataset,
+                batch_size=args.batch,
+                shuffle=False,
+                num_workers=2
+            )
+            officehome_loaders[domain] = loader
+            print(f"  {domain:<12s} | {len(dataset)} samples")
+        except Exception as e:
+            print(f"  {domain:<12s} | Error: {str(e)}")
+            return None
+
+    print("=" * 70 + "\n")
+    return officehome_loaders
+
+def get_argument_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log', action='store_true', help='whether to log')
     parser.add_argument('--wandb', action='store_true', help='use weights and biases logging')
@@ -517,61 +541,64 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=1e-2, help='learning rate')
     parser.add_argument('--batch', type=int, default=32, help='batch size')
     parser.add_argument('--iters', type=int, default=300, help='iterations for communication')
-    parser.add_argument('--wk_iters', type=int, default=1, help='optimization iters in local worker between communication')
+    parser.add_argument('--wk_iters', type=int, default=1,
+                        help='optimization iters in local worker between communication')
     parser.add_argument('--mode', type=str, default='fedbn', help='[FedBN | FedAvg | FedProx]')
     parser.add_argument('--mu', type=float, default=1e-3, help='The hyper parameter for fedprox')
     parser.add_argument('--save_path', type=str, default='../checkpoint/office', help='path to save the checkpoint')
     parser.add_argument('--resume', action='store_true', help='resume training from the save path checkpoint')
-    parser.add_argument('--officehome_path', default='../data/OfficeHomeDataset_10072016', help='path ot office home dataset for testing')
-    parser.add_argument('--officehome_test_client', type=int, default=0, help='0-3 for Amazon, Caltech, DSLR, Webcam respectively')
-
+    parser.add_argument('--officehome_path', default='../data/OfficeHomeDataset_10072016',
+                        help='path ot office home dataset for testing')
+    parser.add_argument('--officehome_test_client', type=int, default=0,
+                        help='0-3 for Amazon, Caltech, DSLR, Webcam respectively')
 
     # ============ Noise configuration arguments ============
     parser.add_argument('--noise_seed', type=int, default=42,
-                       help='Random seed for noise injection (for reproducibility)')
+                        help='Random seed for noise injection (for reproducibility)')
     parser.add_argument('--gaussian_std', type=float, default=0.1,
-                       help='Standard deviation for Gaussian input noise')
+                        help='Standard deviation for Gaussian input noise')
 
     # Method 1: Compact string format for all clients
     parser.add_argument('--client_noise', type=str, default='',
-                       help='Client noise config: "0:input=0.2,label=0.0,mix=3;1:input=0.0,label=0.3,mix=2"')
+                        help='Client noise config: "0:input=0.2,label=0.0;1:input=0.0,label=0.3"')
 
     # Method 2: Individual client arguments (alternative, more verbose)
     parser.add_argument('--client0_input_noise', type=float, default=0.0,
-                       help='Input noise ratio for client 0 (Amazon)')
+                        help='Input noise ratio for client 0 (Amazon)')
     parser.add_argument('--client0_label_noise', type=float, default=0.0,
-                       help='Label noise ratio for client 0 (Amazon)')
-    parser.add_argument('--client0_mix_with', type=int, default=None,
-                       help='Mix client 0 with another client (0-3)')
+                        help='Label noise ratio for client 0 (Amazon)')
     parser.add_argument('--client_datasets', type=str,
                         default='0:1:2:3',
                         help='Dataset assignment for each client. Format: "0:1:2:3" or "0,1:2:3" for multi-dataset clients. '
                              'Datasets: 0=Amazon, 1=Caltech, 2=DSLR, 3=Webcam')
 
     parser.add_argument('--client1_input_noise', type=float, default=0.0,
-                       help='Input noise ratio for client 1 (Caltech)')
+                        help='Input noise ratio for client 1 (Caltech)')
     parser.add_argument('--client1_label_noise', type=float, default=0.0,
-                       help='Label noise ratio for client 1 (Caltech)')
-    parser.add_argument('--client1_mix_with', type=int, default=None,
-                       help='Mix client 1 with another client (0-3)')
+                        help='Label noise ratio for client 1 (Caltech)')
 
     parser.add_argument('--client2_input_noise', type=float, default=0.0,
-                       help='Input noise ratio for client 2 (DSLR)')
+                        help='Input noise ratio for client 2 (DSLR)')
     parser.add_argument('--client2_label_noise', type=float, default=0.0,
-                       help='Label noise ratio for client 2 (DSLR)')
-    parser.add_argument('--client2_mix_with', type=int, default=None,
-                       help='Mix client 2 with another client (0-3)')
+                        help='Label noise ratio for client 2 (DSLR)')
 
     parser.add_argument('--client3_input_noise', type=float, default=0.0,
-                       help='Input noise ratio for client 3 (Webcam)')
+                        help='Input noise ratio for client 3 (Webcam)')
     parser.add_argument('--client3_label_noise', type=float, default=0.0,
-                       help='Label noise ratio for client 3 (Webcam)')
-    parser.add_argument('--client3_mix_with', type=int, default=None,
-                       help='Mix client 3 with another client (0-3)')
-    # ============ END NEW ARGUMENTS ============
+                        help='Label noise ratio for client 3 (Webcam)')
 
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+if __name__ == '__main__':
+    device = get_device()
+    seed = 4
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+
+    args = get_argument_parser()
     if args.wandb:
         run_name = args.wandb_run_name if args.wandb_run_name else f"{args.mode}_lr{args.lr}_batch{args.batch}"
         wandb.init(
@@ -613,6 +640,9 @@ if __name__ == '__main__':
         logfile.write('    client_noise: {}\n'.format(args.client_noise))
 
     train_loaders, val_loaders, test_loaders, datasets = prepare_data_configurable(args)
+
+    # Load Office-Home data once in main
+    officehome_loaders = load_officehome_data(args)
 
     # setup model
     server_model = AlexNet().to(device)
@@ -838,7 +868,7 @@ if __name__ == '__main__':
             if log:
                 logfile.flush()
 
-    if args.officehome_path is not None:
+    if officehome_loaders is not None:
         print("\n" + "="*70)
         print("Testing on Office-Home Dataset (Out-of-Distribution)")
         print("="*70)
@@ -847,6 +877,7 @@ if __name__ == '__main__':
         officehome_results = test_all_clients_on_officehome(
             models=models,
             server_model=server_model,
+            officehome_loaders=officehome_loaders,
             args=args,
             device=device,
             mode=args.mode,
