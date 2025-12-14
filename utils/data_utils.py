@@ -3,7 +3,6 @@ base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_path)
 
 import numpy as np
-import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 from PIL import Image
@@ -78,6 +77,58 @@ class OfficeDataset(Dataset):
             image = transforms.Grayscale(num_output_channels=3)(image)
 
         if self.transform is not None:
+            image = self.transform(image)
+
+        return image, label
+
+class OfficeHomeDataset(Dataset):
+    """
+    Office-Home dataset filtered to Office-Caltech-10 compatible classes
+    """
+
+    OFFICE_CALTECH_MAP = {
+        'Backpack': 0,
+        'Bike': 1,
+        'Calculator': 2,
+        'Headphones': 3,
+        'Keyboard': 4,
+        'Laptop': 5,
+        'Monitor': 6,
+        'Mouse': 7,
+        'Mug': 8,
+        'Projector': 9
+    }
+
+    def __init__(self, base_path, domain, transform=None):
+        """
+        base_path: path to office_home root
+        domain: one of ['Art', 'Clipart', 'Product', 'RealWorld']
+        """
+        self.samples = []
+        self.labels = []
+        self.transform = transform
+
+        domain_path = os.path.join(base_path, domain)
+        assert os.path.isdir(domain_path), f"Domain {domain} not found"
+
+        for class_name, label in self.OFFICE_CALTECH_MAP.items():
+            class_dir = os.path.join(domain_path, class_name)
+            if not os.path.isdir(class_dir):
+                continue
+
+            for fname in os.listdir(class_dir):
+                if fname.lower().endswith(('.jpg', '.png', '.jpeg')):
+                    self.samples.append(os.path.join(class_dir, fname))
+                    self.labels.append(label)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        image = Image.open(self.samples[idx]).convert('RGB')
+        label = self.labels[idx]
+
+        if self.transform:
             image = self.transform(image)
 
         return image, label

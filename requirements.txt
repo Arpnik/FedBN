@@ -6,4 +6,7 @@ Pillow>=8.0.1
 torch>=1.7.0
 torchvision>=0.8.1
 typing-extension>=3.7.4.3
-wandb==0.23.1
+wandb>=0.23.1
+matplotlib>=3.10.8
+scikit-learn>=1.7.2
+seaborn>=0.13.2
