@@ -105,7 +105,7 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
 
                 print(f"  {domain:<12s} | Loss: {avg_loss:.4f} | Acc: {accuracy:.4f} | Samples: {total}")
 
-                # MODIFIED: Only log confusion matrix if explicitly requested
+                # Only log confusion matrix if explicitly requested
                 if log_to_wandb and wandb.run is not None:
                     log_dict = {
                         f"officehome/{domain}_loss": avg_loss,
@@ -114,7 +114,7 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
 
                     # Only add confusion matrix if log_confusion_matrix is True
                     if log_confusion_matrix:
-                        log_dict[f"officehome/{domain}_confusion_matrix"] = wandb.plot.confusion_matrix(
+                        log_dict[f"officehome/{model_name}_{domain}_confusion_matrix"] = wandb.plot.confusion_matrix(
                             probs=None,
                             y_true=all_targets,
                             preds=all_preds,
