@@ -1,6 +1,7 @@
 """
 Federated learning with different aggregation strategies on Office dataset
 Extended with configurable noise injection for robustness experiments
+MODIFIED: Confusion matrices only printed at the end of training
 """
 import sys, os
 
@@ -10,7 +11,7 @@ sys.path.append(base_path)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.helper import get_device
 from utils.data_utils import OfficeDataset, OfficeHomeDataset
-from utils.noise_utils import get_client_noise_config, NoiseInjector, print_noise_summary, NoisyDatasetWrapper
+from utils.noise_utils import get_client_noise_config, NoiseInjector, NoisyDatasetWrapper
 
 import torch
 import torch.nn as nn
@@ -23,29 +24,19 @@ import copy
 import torchvision.transforms as transforms
 import random
 import numpy as np
+from sklearn.metrics import confusion_matrix
 
+CLASS_NAMES = [
+    'Backpack', 'Bike', 'Calculator', 'Headphones', 'Keyboard',
+    'Laptop', 'Monitor', 'Mouse', 'Mug', 'Projector'
+]
 
 def test_on_officehome(models, server_model, officehome_loaders, args, device, mode='fedbn',
-                       client_idx=0, log_to_wandb=False, communication_round=None):
+                       client_idx=0, log_to_wandb=False, communication_round=None, log_confusion_matrix=False):
     """
     Test trained model(s) on Office-Home dataset for generalization evaluation
-
-    Args:
-        models: List of client models (for FedBN)
-        server_model: Server model (for FedAvg/FedProx)
-        officehome_loaders: Dict of Office-Home data loaders (passed from main)
-        args: Arguments containing batch size, etc.
-        device: Computing device
-        mode: Training mode ('fedbn', 'fedavg', 'fedprox')
-        client_idx: Which client's model to use for testing (0-3)
-        log_to_wandb: Whether to log results to wandb
-        communication_round: Current communication round (for logging)
-
-    Returns:
-        dict: Dictionary with results for each Office-Home domain
+    Added log_confusion_matrix parameter to control when confusion matrices are logged
     """
-
-    # Check if Office-Home loaders are provided
     if officehome_loaders is None:
         print("Office-Home loaders not provided, skipping Office-Home evaluation")
         return None
@@ -61,13 +52,9 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
         test_model = server_model
         model_name = "Server"
 
-    # Office-Home domains
     officehome_domains = ['Art', 'Clipart', 'Product', 'Real World']
-
-    # Loss function
     loss_fun = nn.CrossEntropyLoss()
 
-    # Store results
     results = {}
     all_losses = []
     all_accs = []
@@ -80,18 +67,18 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
     with torch.no_grad():
         for domain in officehome_domains:
             try:
-                # Get the loader for this domain
                 officehome_loader = officehome_loaders[domain]
-
-                # Test on this domain
                 loss_all = 0
                 total = 0
                 correct = 0
 
+                # Track predictions for confusion matrix
+                all_preds = []
+                all_targets = []
+
                 for data, target in officehome_loader:
                     data = data.to(device)
                     target = target.to(device)
-
                     output = test_model(data)
                     loss = loss_fun(output, target)
 
@@ -100,11 +87,13 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
                     pred = output.data.max(1)[1]
                     correct += pred.eq(target.view(-1)).sum().item()
 
-                # Calculate metrics
+                    # Collect predictions and targets
+                    all_preds.extend(pred.cpu().numpy())
+                    all_targets.extend(target.cpu().numpy())
+
                 avg_loss = loss_all / len(officehome_loader)
                 accuracy = correct / total
 
-                # Store results
                 results[domain] = {
                     'loss': avg_loss,
                     'accuracy': accuracy,
@@ -114,15 +103,24 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
                 all_losses.append(avg_loss)
                 all_accs.append(accuracy)
 
-                # Print results
                 print(f"  {domain:<12s} | Loss: {avg_loss:.4f} | Acc: {accuracy:.4f} | Samples: {total}")
 
-                # Log to wandb if enabled
+                # MODIFIED: Only log confusion matrix if explicitly requested
                 if log_to_wandb and wandb.run is not None:
                     log_dict = {
                         f"officehome/{domain}_loss": avg_loss,
                         f"officehome/{domain}_acc": accuracy,
                     }
+
+                    # Only add confusion matrix if log_confusion_matrix is True
+                    if log_confusion_matrix:
+                        log_dict[f"officehome/{domain}_confusion_matrix"] = wandb.plot.confusion_matrix(
+                            probs=None,
+                            y_true=all_targets,
+                            preds=all_preds,
+                            class_names=CLASS_NAMES
+                        )
+
                     if communication_round is not None:
                         log_dict["communication_round"] = communication_round
                     wandb.log(log_dict)
@@ -157,24 +155,11 @@ def test_on_officehome(models, server_model, officehome_loaders, args, device, m
 
     return results
 
-
 def test_all_clients_on_officehome(models, server_model, officehome_loaders, args, device, mode='fedbn',
-                                   log_to_wandb=False, communication_round=None):
+                                   log_to_wandb=False, communication_round=None, log_confusion_matrix=False):
     """
     Test all client models on Office-Home to compare generalization
-
-    Args:
-        models: List of client models
-        server_model: Server model
-        officehome_loaders: Dict of Office-Home data loaders
-        args: Arguments
-        device: Computing device
-        mode: Training mode
-        log_to_wandb: Whether to log to wandb
-        communication_round: Current round
-
-    Returns:
-        dict: Results for each client on each Office-Home domain
+    Added log_confusion_matrix parameter
     """
 
     if mode.lower() != 'fedbn':
@@ -183,7 +168,8 @@ def test_all_clients_on_officehome(models, server_model, officehome_loaders, arg
         return test_on_officehome(
             models, server_model, officehome_loaders, args, device, mode,
             client_idx=0, log_to_wandb=log_to_wandb,
-            communication_round=communication_round
+            communication_round=communication_round,
+            log_confusion_matrix=log_confusion_matrix
         )
 
     # For FedBN, test each client model
@@ -197,21 +183,11 @@ def test_all_clients_on_officehome(models, server_model, officehome_loaders, arg
         print(f"\nTesting Client {client_idx}:")
         results = test_on_officehome(
             models, server_model, officehome_loaders, args, device, mode,
-            client_idx=client_idx, log_to_wandb=False,  # Log manually below
-            communication_round=communication_round
+            client_idx=client_idx, log_to_wandb=log_to_wandb,
+            communication_round=communication_round,
+            log_confusion_matrix=log_confusion_matrix  # Pass through the parameter
         )
         all_results[f'client_{client_idx}'] = results
-
-        # Log to wandb with client prefix
-        if log_to_wandb and wandb.run is not None and results:
-            for domain, metrics in results.items():
-                if 'error' not in metrics:
-                    log_dict = {
-                        f"officehome/client{client_idx}_{domain}_acc": metrics['accuracy'],
-                    }
-                    if communication_round is not None:
-                        log_dict["communication_round"] = communication_round
-                    wandb.log(log_dict)
 
     # Calculate best client per domain
     print("\nBest Client Performance per Domain:")
@@ -786,6 +762,16 @@ if __name__ == '__main__':
                         "best_epoch": best_epoch,
                     })
 
+            # MODIFIED: Removed confusion matrix logging during training, only log accuracy every 50 rounds
+            if a_iter % 50 == 0:
+                officehome_results = test_on_officehome(
+                    models, server_model, officehome_loaders,
+                    args, device, mode=args.mode,
+                    log_to_wandb=True,
+                    communication_round=a_iter,
+                    log_confusion_matrix=False  # Don't log confusion matrices during training
+                )
+
             if best_changed:
                 print(' Saving the local and server checkpoint to {}...'.format(SAVE_PATH))
                 if args.log:
@@ -803,13 +789,14 @@ if __name__ == '__main__':
                     torch.save(checkpoint, SAVE_PATH)
                     best_changed = False
 
-                    # Test on each client's test set
+                    # MODIFIED: Removed confusion matrix logging here, only log accuracy
                     test_accs = []
                     test_losses = []
                     for client_idx, datasite in enumerate(datasets):
                         test_loss, test_acc = test(models[client_idx], test_loaders[client_idx], loss_fun, device)
                         test_accs.append(test_acc)
                         test_losses.append(test_loss)
+
                         print(' Test site-{:<10s}| Epoch:{} | Test Acc: {:.4f}'.format(datasite, best_epoch, test_acc))
                         if args.log:
                             logfile.write(
@@ -838,7 +825,7 @@ if __name__ == '__main__':
                     }, SAVE_PATH)
                     best_changed = False
 
-                    # Test on each client's test set
+                    # MODIFIED: Removed confusion matrix logging here, only log accuracy
                     test_accs = []
                     test_losses = []
                     for client_idx, datasite in enumerate(datasets):
@@ -868,12 +855,63 @@ if __name__ == '__main__':
             if log:
                 logfile.flush()
 
-    if officehome_loaders is not None:
-        print("\n" + "="*70)
-        print("Testing on Office-Home Dataset (Out-of-Distribution)")
-        print("="*70)
+    # ============================================================================
+    # MODIFIED: Final testing with confusion matrices at the end of training
+    # ============================================================================
+    print("\n" + "="*70)
+    print("FINAL EVALUATION WITH CONFUSION MATRICES")
+    print("="*70)
 
-        # For FedAvg/FedProx, use server model
+    # Test on Office datasets with confusion matrices
+    print("\nTesting on Office datasets...")
+    for client_idx, datasite in enumerate(datasets):
+        if args.mode.lower() == 'fedbn':
+            test_model = models[client_idx]
+        else:
+            test_model = server_model
+
+        test_model.eval()
+        loss_all = 0
+        total = 0
+        correct = 0
+        all_preds = []
+        all_targets = []
+
+        with torch.no_grad():
+            for data, target in test_loaders[client_idx]:
+                data = data.to(device)
+                target = target.to(device)
+                output = test_model(data)
+                loss = loss_fun(output, target)
+
+                loss_all += loss.item()
+                total += target.size(0)
+                pred = output.data.max(1)[1]
+                correct += pred.eq(target.view(-1)).sum().item()
+
+                all_preds.extend(pred.cpu().numpy())
+                all_targets.extend(target.cpu().numpy())
+
+        test_loss = loss_all / len(test_loaders[client_idx])
+        test_acc = correct / total
+
+        print(f' {datasite:<12s}| Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}')
+
+        if args.wandb:
+            wandb.log({
+                f"final_test/loss_{datasite}": test_loss,
+                f"final_test/acc_{datasite}": test_acc,
+                f"final_test/confusion_matrix_{datasite}": wandb.plot.confusion_matrix(
+                    probs=None,
+                    y_true=all_targets,
+                    preds=all_preds,
+                    class_names=CLASS_NAMES
+                ),
+            })
+
+    # Test on Office-Home datasets with confusion matrices
+    if officehome_loaders is not None:
+        print("\nTesting on Office-Home datasets...")
         officehome_results = test_all_clients_on_officehome(
             models=models,
             server_model=server_model,
@@ -881,7 +919,8 @@ if __name__ == '__main__':
             args=args,
             device=device,
             mode=args.mode,
-            log_to_wandb=args.wandb
+            log_to_wandb=args.wandb,
+            log_confusion_matrix=True  # Enable confusion matrix logging at the end
         )
 
         if officehome_results and args.log:
@@ -889,6 +928,8 @@ if __name__ == '__main__':
             for domain, metrics in officehome_results.items():
                 if 'accuracy' in metrics:
                     logfile.write(f"  {domain}: Acc={metrics['accuracy']:.4f}, Loss={metrics['loss']:.4f}\n")
+
+    print("="*70 + "\n")
 
     if log:
         logfile.flush()
