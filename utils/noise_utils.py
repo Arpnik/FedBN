@@ -1,6 +1,7 @@
 """
 Noise utilities for federated learning experiments
 Supports Gaussian input noise and label noise injection
+FIXED: Uses independent PyTorch Generator for reproducible, isolated noise
 """
 import torch
 import numpy as np
@@ -11,6 +12,7 @@ class NoiseInjector:
     """
     Handles noise injection for federated learning clients
     Supports both input (Gaussian) noise and label noise
+    FIXED: Uses separate PyTorch generator to avoid interference with training RNG
     """
 
     def __init__(self, seed=42):
@@ -22,8 +24,17 @@ class NoiseInjector:
         """
         self.seed = seed
         self.rng = np.random.RandomState(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+
+        # CRITICAL FIX: Create independent PyTorch generator
+        self.torch_generator = torch.Generator()
+        self.torch_generator.manual_seed(seed)
+
+        # Also create CUDA generator if available
+        if torch.cuda.is_available():
+            self.torch_generator_cuda = torch.Generator(device='cuda')
+            self.torch_generator_cuda.manual_seed(seed)
+        else:
+            self.torch_generator_cuda = None
 
     def add_gaussian_noise(self, images, noise_ratio, std=0.1):
         """
@@ -46,10 +57,21 @@ class NoiseInjector:
         # Determine which images get noise based on noise_ratio
         noise_mask = self.rng.rand(batch_size) < noise_ratio
 
+        # Select appropriate generator based on device
+        if images.is_cuda and self.torch_generator_cuda is not None:
+            generator = self.torch_generator_cuda
+        else:
+            generator = self.torch_generator
+
         for i in range(batch_size):
             if noise_mask[i]:
-                # Add Gaussian noise
-                noise = torch.randn_like(images[i]) * std
+                # CRITICAL FIX: Use independent generator instead of global RNG
+                noise = torch.randn(
+                    images[i].shape,
+                    generator=generator,
+                    device=images.device,
+                    dtype=images.dtype
+                ) * std
                 noisy_images[i] = images[i] + noise
                 # Clip to valid range [0, 1]
                 noisy_images[i] = torch.clamp(noisy_images[i], 0, 1)
@@ -91,26 +113,44 @@ class NoiseInjector:
 class NoisyDatasetWrapper(torch.utils.data.Dataset):
     """
     Wrapper for applying noise to datasets dynamically
+    FIXED: Correctly determines number of classes
     """
 
     def __init__(self, dataset, noise_injector,
                  input_noise_ratio=0.0, label_noise_ratio=0.0,
-                 num_classes=31, gaussian_std=0.1):
+                 num_classes=None, gaussian_std=0.1):
         """
         Args:
             dataset: Base dataset to wrap
             noise_injector: NoiseInjector instance
             input_noise_ratio: Probability of adding Gaussian noise to inputs
             label_noise_ratio: Probability of flipping labels
-            num_classes: Number of classes for label noise
+            num_classes: Number of classes for label noise (auto-detect if None)
             gaussian_std: Standard deviation for Gaussian noise
         """
         self.dataset = dataset
         self.noise_injector = noise_injector
         self.input_noise_ratio = input_noise_ratio
         self.label_noise_ratio = label_noise_ratio
-        self.num_classes = num_classes
         self.gaussian_std = gaussian_std
+
+        if num_classes is None:
+            # Try to infer from dataset
+            if hasattr(dataset, 'classes'):
+                self.num_classes = len(dataset.classes)
+            else:
+                # Scan dataset to find max label
+                max_label = 0
+                sample_size = min(100, len(dataset))
+                for i in range(sample_size):
+                    _, label = dataset[i]
+                    if isinstance(label, torch.Tensor):
+                        label = label.item()
+                    max_label = max(max_label, label)
+                self.num_classes = max_label + 1
+                print(f"Auto-detected {self.num_classes} classes from dataset")
+        else:
+            self.num_classes = num_classes
 
     def __len__(self):
         return len(self.dataset)

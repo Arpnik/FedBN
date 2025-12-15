@@ -361,6 +361,7 @@ def prepare_data_configurable(args):
         OfficeDataset(data_base_path, 'webcam', transform=transform_test, train=False)
     ]
 
+
     # Parse client-dataset assignment
     client_dataset_assignment = parse_client_datasets(args.client_datasets)
 
@@ -412,14 +413,12 @@ def prepare_data_configurable(args):
                 trainset, noise_injector,
                 input_noise_ratio=config['input_noise_ratio'],
                 label_noise_ratio=config['label_noise_ratio'],
-                num_classes=31,
                 gaussian_std=config['gaussian_std']
             )
             valset = NoisyDatasetWrapper(
                 valset, noise_injector,
                 input_noise_ratio=config['input_noise_ratio'],
                 label_noise_ratio=config['label_noise_ratio'],
-                num_classes=31,
                 gaussian_std=config['gaussian_std']
             )
 
@@ -442,6 +441,11 @@ def prepare_data_configurable(args):
         torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=True)
         for ds in final_trainsets
     ]
+
+    for i, loader in enumerate(train_loaders):
+        ds = loader.dataset
+        if hasattr(ds, 'input_noise_ratio'):
+            print(f"Client {i} noise ratio:", ds.input_noise_ratio)
 
     val_loaders = [
         torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=False)
@@ -532,7 +536,7 @@ def get_argument_parser():
     # ============ Noise configuration arguments ============
     parser.add_argument('--noise_seed', type=int, default=42,
                         help='Random seed for noise injection (for reproducibility)')
-    parser.add_argument('--gaussian_std', type=float, default=0.1,
+    parser.add_argument('--gaussian_std', type=float, default=0.5,
                         help='Standard deviation for Gaussian input noise')
 
     # Method 1: Compact string format for all clients
