@@ -330,8 +330,11 @@ def parse_client_datasets(client_datasets_str):
 
 def prepare_data_configurable(args):
     """
-    Modified prepare_data function with configurable client-dataset assignment.
-    Replace your existing prepare_data function with this.
+    Modified prepare_data function with HARDCODED client-dataset noise assignment.
+    - Amazon (Client 0): Gaussian noise only
+    - Caltech (Client 1): Label noise only
+    - DSLR (Client 2): Both Gaussian and Label noise
+    - Webcam (Client 3): No noise
     """
     data_base_path = '../data'
     transform_office = transforms.Compose([
@@ -361,7 +364,6 @@ def prepare_data_configurable(args):
         OfficeDataset(data_base_path, 'webcam', transform=transform_test, train=False)
     ]
 
-
     # Parse client-dataset assignment
     client_dataset_assignment = parse_client_datasets(args.client_datasets)
 
@@ -383,6 +385,18 @@ def prepare_data_configurable(args):
     noise_injector = NoiseInjector(seed=args.noise_seed)
     datasets_names = ['Amazon', 'Caltech', 'DSLR', 'Webcam']
 
+    # HARDCODED NOISE CONFIGURATION
+    # Client 0 (Amazon): Gaussian noise only
+    # Client 1 (Caltech): Label noise only
+    # Client 2 (DSLR): Both Gaussian and Label noise
+    # Client 3 (Webcam): No noise
+    hardcoded_noise_configs = [
+        {'input_noise_ratio': 0.3, 'label_noise_ratio': 0.0, 'gaussian_std': 0.5},  # Amazon
+        {'input_noise_ratio': 0.0, 'label_noise_ratio': 0.3, 'gaussian_std': 0.5},  # Caltech
+        {'input_noise_ratio': 0.3, 'label_noise_ratio': 0.4, 'gaussian_std': 0.5},  # DSLR
+        {'input_noise_ratio': 0.0, 'label_noise_ratio': 0.0, 'gaussian_std': 0.0},  # Webcam
+    ]
+
     # Prepare data for each client based on assignment
     final_trainsets = []
     final_valsets = []
@@ -390,8 +404,8 @@ def prepare_data_configurable(args):
     client_names = []
 
     for client_idx, dataset_indices in enumerate(client_dataset_assignment):
-        # Get noise config for this client
-        config = get_client_noise_config(client_idx, args)
+        # Get HARDCODED noise config for this client
+        config = hardcoded_noise_configs[client_idx]
 
         # Combine datasets if multiple assigned to this client
         if len(dataset_indices) == 1:
@@ -427,13 +441,21 @@ def prepare_data_configurable(args):
         final_testsets.append(testset)
         client_names.append(client_name)
 
-    # Print configuration
+    # Print configuration with noise info
     print("\n" + "=" * 70)
-    print("CLIENT CONFIGURATION")
+    print("CLIENT CONFIGURATION (HARDCODED NOISE)")
     print("=" * 70)
     for i, (name, indices) in enumerate(zip(client_names, client_dataset_assignment)):
         dataset_str = ', '.join([datasets_names[idx] for idx in indices])
-        print(f"Client {i}: {name} (datasets: {dataset_str})")
+        config = hardcoded_noise_configs[i]
+        noise_desc = []
+        if config['input_noise_ratio'] > 0:
+            noise_desc.append(f"Gaussian={config['input_noise_ratio']}")
+        if config['label_noise_ratio'] > 0:
+            noise_desc.append(f"Label={config['label_noise_ratio']}")
+        if not noise_desc:
+            noise_desc.append("No noise")
+        print(f"Client {i}: {name} (datasets: {dataset_str}) | Noise: {', '.join(noise_desc)}")
     print("=" * 70 + "\n")
 
     # Create data loaders
@@ -441,11 +463,6 @@ def prepare_data_configurable(args):
         torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=True)
         for ds in final_trainsets
     ]
-
-    for i, loader in enumerate(train_loaders):
-        ds = loader.dataset
-        if hasattr(ds, 'input_noise_ratio'):
-            print(f"Client {i} noise ratio:", ds.input_noise_ratio)
 
     val_loaders = [
         torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=False)
@@ -458,7 +475,6 @@ def prepare_data_configurable(args):
     ]
 
     return train_loaders, val_loaders, test_loaders, client_names
-
 
 def load_officehome_data(args):
     """
