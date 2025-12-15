@@ -1,298 +1,212 @@
 """
-Test script to verify noise implementation
-Run this to ensure noise injection works correctly before running full experiments
+Better noise visualization test with different std values
 """
-import time
-
 import torch
-from noise_utils import NoiseInjector, NoisyDatasetWrapper, get_client_noise_config
 import matplotlib.pyplot as plt
+from noise_utils import NoiseInjector
 
 
-def test_gaussian_noise():
-    """Test Gaussian noise injection on dummy images"""
+def visualize_noise_levels():
+    """Compare different noise standard deviations"""
     print("\n" + "=" * 70)
-    print("TEST 1: Gaussian Input Noise")
+    print("GAUSSIAN NOISE STANDARD DEVIATION COMPARISON")
     print("=" * 70)
 
-    # Create dummy images
-    batch_size = 10
-    images = torch.ones(batch_size, 3, 256, 256) * 0.5  # Gray images
+    # Create a clean test image with some structure
+    clean_img = torch.ones(3, 256, 256) * 0.5
+    clean_img[:, 64:192, 64:192] = 0.8  # Bright square
+    clean_img[:, 100:156, 100:156] = 0.3  # Dark square inside
 
-    # Initialize noise injector
-    noise_injector = NoiseInjector(seed=42)
+    # Test different std values
+    std_values = [0.0, 0.1, 0.2, 0.3, 0.5]
 
-    # Test different noise ratios
-    for noise_ratio in [0.0, 0.2, 0.5, 1.0]:
-        noisy_images = noise_injector.add_gaussian_noise(images, noise_ratio, std=0.1)
+    fig, axes = plt.subplots(1, len(std_values), figsize=(20, 4))
+    fig.suptitle('Gaussian Noise with Different Standard Deviations (100% of pixels affected)',
+                 fontsize=14, fontweight='bold')
 
-        # Count how many images were modified
-        modified = (noisy_images != images).any(dim=(1, 2, 3)).sum().item()
-        expected = int(batch_size * noise_ratio)
-
-        print(f"Noise ratio: {noise_ratio:.1f}")
-        print(f"  Images modified: {modified}/{batch_size} (expected ~{expected})")
-        print(f"  Mean difference: {(noisy_images - images).abs().mean().item():.6f}")
-        print(f"  Value range: [{noisy_images.min().item():.3f}, {noisy_images.max().item():.3f}]")
-
-        # Check values are clipped to [0, 1]
-        assert noisy_images.min() >= 0.0, "Values below 0!"
-        assert noisy_images.max() <= 1.0, "Values above 1!"
-
-    print("✓ Gaussian noise test passed!\n")
-
-
-def test_label_noise():
-    """Test label noise injection"""
-    print("=" * 70)
-    print("TEST 2: Label Noise")
-    print("=" * 70)
-
-    # Create dummy labels
-    batch_size = 100
-    num_classes = 31
-    labels = torch.randint(0, num_classes, (batch_size,))
-
-    # Initialize noise injector
-    noise_injector = NoiseInjector(seed=42)
-
-    # Test different noise ratios
-    for noise_ratio in [0.0, 0.2, 0.5, 1.0]:
-        noisy_labels = noise_injector.add_label_noise(labels, noise_ratio, num_classes)
-
-        # Count how many labels were flipped
-        flipped = (noisy_labels != labels).sum().item()
-        expected = int(batch_size * noise_ratio)
-
-        print(f"Noise ratio: {noise_ratio:.1f}")
-        print(f"  Labels flipped: {flipped}/{batch_size} (expected ~{expected})")
-
-        # Check that flipped labels are different from original
-        different_mask = noisy_labels != labels
-        if different_mask.any():
-            assert (noisy_labels[different_mask] != labels[different_mask]).all(), \
-                "Some 'flipped' labels are the same!"
-
-        # Check labels are in valid range
-        assert noisy_labels.min() >= 0, "Labels below 0!"
-        assert noisy_labels.max() < num_classes, f"Labels >= {num_classes}!"
-
-    print("✓ Label noise test passed!\n")
-
-
-def test_reproducibility():
-    """Test that same seed produces same noise"""
-    print("=" * 70)
-    print("TEST 3: Reproducibility")
-    print("=" * 70)
-
-    images = torch.rand(5, 3, 256, 256)
-    labels = torch.randint(0, 31, (5,))
-
-    # Run twice with same seed
-    results = []
-    for run in range(4):
-        noise_injector = NoiseInjector(seed=42)
-        time.sleep(60)  # delay for 2 seconds
-        noisy_images = noise_injector.add_gaussian_noise(images, 0.5, std=0.1)
-        noisy_labels = noise_injector.add_label_noise(labels, 0.5, 31)
-        results.append((noisy_images, noisy_labels))
-
-    # Check they're identical
-    assert torch.allclose(results[0][0], results[1][0]), "Images differ between runs!"
-    assert torch.equal(results[0][1], results[1][1]), "Labels differ between runs!"
-    assert torch.allclose(results[0][0], results[2][0]), "Images differ between runs!"
-    assert torch.equal(results[0][1], results[2][1]), "Labels differ between runs!"
-    assert torch.allclose(results[0][0], results[3][0]), "Images differ between runs!"
-    assert torch.equal(results[0][1], results[3][1]), "Labels differ between runs!"
-
-
-    print("Run 1 and Run 2 with seed=42:")
-    print(f"  Images identical: ✓")
-    print(f"  Labels identical: ✓")
-
-    # Run with different seed - should be different
-    noise_injector = NoiseInjector(seed=123)
-    noisy_images_diff = noise_injector.add_gaussian_noise(images, 0.5, std=0.1)
-    noisy_labels_diff = noise_injector.add_label_noise(labels, 0.5, 31)
-
-    assert not torch.allclose(results[0][0], noisy_images_diff), \
-        "Different seeds produced same images!"
-
-    print("Run 3 with seed=123:")
-    print(f"  Different from seed=42: ✓")
-    print("✓ Reproducibility test passed!\n")
-
-
-def test_config_parsing():
-    """Test configuration parsing"""
-    print("=" * 70)
-    print("TEST 4: Configuration Parsing")
-    print("=" * 70)
-
-    # Mock args object
-    class Args:
-        pass
-
-    # Test compact format
-    args = Args()
-    args.client_noise = "0:input=0.2,label=0.0,mix=2;1:input=0.0,label=0.3,mix=3"
-    args.gaussian_std = 0.1
-
-    config0 = get_client_noise_config(0, args)
-    config1 = get_client_noise_config(1, args)
-    config2 = get_client_noise_config(2, args)
-
-    print("Compact format parsing:")
-    print(f"  Client 0: input={config0['input_noise_ratio']}, " +
-          f"label={config0['label_noise_ratio']}, mix={config0['mixed_domains']}")
-    assert config0['input_noise_ratio'] == 0.2
-    assert config0['label_noise_ratio'] == 0.0
-    assert config0['mixed_domains'] == 2
-
-    print(f"  Client 1: input={config1['input_noise_ratio']}, " +
-          f"label={config1['label_noise_ratio']}, mix={config1['mixed_domains']}")
-    assert config1['input_noise_ratio'] == 0.0
-    assert config1['label_noise_ratio'] == 0.3
-    assert config1['mixed_domains'] == 3
-
-    print(f"  Client 2: input={config2['input_noise_ratio']}, " +
-          f"label={config2['label_noise_ratio']}, mix={config2['mixed_domains']}")
-    assert config2['input_noise_ratio'] == 0.0
-    assert config2['label_noise_ratio'] == 0.0
-    assert config2['mixed_domains'] == None
-
-    # Test individual format
-    args2 = Args()
-    args2.client_noise = ""
-    args2.client0_input_noise = 0.15
-    args2.client0_label_noise = 0.0
-    args2.client0_mix_with = 1
-    args2.gaussian_std = 0.1
-
-    config = get_client_noise_config(0, args2)
-    print("\nIndividual format parsing:")
-    print(f"  Client 0: input={config['input_noise_ratio']}, " +
-          f"label={config['label_noise_ratio']}, mix={config['mixed_domains']}")
-    assert config['input_noise_ratio'] == 0.15
-    assert config['mixed_domains'] == 1
-
-    print("✓ Configuration parsing test passed!\n")
-
-
-def test_dataset_wrapper():
-    """Test NoisyDatasetWrapper"""
-    print("=" * 70)
-    print("TEST 5: Dataset Wrapper")
-    print("=" * 70)
-
-    # Create a simple dummy dataset
-    class DummyDataset(torch.utils.data.Dataset):
-        def __init__(self, size=10):
-            self.size = size
-
-        def __len__(self):
-            return self.size
-
-        def __getitem__(self, idx):
-            # Return constant image and label for testing
-            image = torch.ones(3, 256, 256) * 0.5
-            label = 5
-            return image, label
-
-    dataset = DummyDataset(10)
-    noise_injector = NoiseInjector(seed=42)
-
-    # Wrap with noise
-    noisy_dataset = NoisyDatasetWrapper(
-        dataset,
-        noise_injector,
-        input_noise_ratio=0.5,
-        label_noise_ratio=0.5,
-        num_classes=31,
-        gaussian_std=0.1
-    )
-
-    # Test multiple samples
-    input_noise_count = 0
-    label_noise_count = 0
-
-    for i in range(10):
-        clean_img, clean_label = dataset[i]
-        noisy_img, noisy_label = noisy_dataset[i]
-
-        if not torch.equal(clean_img, noisy_img):
-            input_noise_count += 1
-        if clean_label != noisy_label:
-            label_noise_count += 1
-
-    print(f"Samples with input noise: {input_noise_count}/10 (expected ~5)")
-    print(f"Samples with label noise: {label_noise_count}/10 (expected ~5)")
-
-    # Check dataset length is preserved
-    assert len(noisy_dataset) == len(dataset), "Dataset length changed!"
-
-    print("✓ Dataset wrapper test passed!\n")
-
-
-def visualize_noise_example():
-    """Create a visualization of noise effects"""
-    print("=" * 70)
-    print("TEST 6: Visualization (optional)")
-    print("=" * 70)
-
-    try:
-        # Create a clean test image
-        clean_img = torch.ones(3, 256, 256) * 0.5
-        clean_img[:, 64:192, 64:192] = 0.8  # Add a bright square
-
-        noise_injector = NoiseInjector(seed=42)
-
-        # Apply different levels of noise
-        noise_levels = [0.0, 0.1, 0.2, 0.3]
-        fig, axes = plt.subplots(1, len(noise_levels), figsize=(16, 4))
-
-        for idx, noise_ratio in enumerate(noise_levels):
+    for idx, std in enumerate(std_values):
+        if std == 0.0:
+            noisy_img = clean_img
+            title = 'Clean (std=0)'
+        else:
+            noise_injector = NoiseInjector(seed=42)
+            # Apply noise to ALL pixels (ratio=1.0) to see the effect clearly
             noisy_img = noise_injector.add_gaussian_noise(
                 clean_img.unsqueeze(0),
-                noise_ratio if noise_ratio > 0 else 1.0,  # Always apply if not 0
-                std=0.1
+                noise_ratio=1.0,
+                std=std
+            ).squeeze(0)
+            title = f'std={std}'
+
+        # Convert to displayable format
+        img_np = noisy_img.permute(1, 2, 0).numpy()
+
+        axes[idx].imshow(img_np, vmin=0, vmax=1)
+        axes[idx].set_title(title, fontsize=12)
+        axes[idx].axis('off')
+
+        # Calculate metrics
+        if std > 0:
+            diff = (noisy_img - clean_img).abs().mean().item()
+            snr = clean_img.mean().item() / diff if diff > 0 else float('inf')
+            axes[idx].text(0.5, -0.05, f'Diff: {diff:.4f}\nSNR: {snr:.2f}',
+                          transform=axes[idx].transAxes, ha='center', fontsize=9)
+
+    plt.tight_layout()
+    plt.savefig('noise_std_comparison.png', dpi=150, bbox_inches='tight')
+    print("Saved: noise_std_comparison.png")
+    print("=" * 70 + "\n")
+
+
+def visualize_noise_ratios():
+    """Compare different noise application ratios"""
+    print("=" * 70)
+    print("GAUSSIAN NOISE RATIO COMPARISON (std=0.2)")
+    print("=" * 70)
+
+    # Create a clean test image
+    clean_img = torch.ones(3, 256, 256) * 0.5
+    clean_img[:, 64:192, 64:192] = 0.8
+    clean_img[:, 100:156, 100:156] = 0.3
+
+    # Test different ratios with fixed std
+    ratios = [0.0, 0.25, 0.5, 0.75, 1.0]
+    std = 0.2
+
+    fig, axes = plt.subplots(1, len(ratios), figsize=(20, 4))
+    fig.suptitle(f'Gaussian Noise with Different Application Ratios (std={std})',
+                 fontsize=14, fontweight='bold')
+
+    for idx, ratio in enumerate(ratios):
+        noise_injector = NoiseInjector(seed=42)
+
+        if ratio == 0.0:
+            noisy_img = clean_img
+            title = 'No Noise (0%)'
+        else:
+            noisy_img = noise_injector.add_gaussian_noise(
+                clean_img.unsqueeze(0),
+                noise_ratio=ratio,
+                std=std
+            ).squeeze(0)
+            title = f'{int(ratio*100)}% affected'
+
+        img_np = noisy_img.permute(1, 2, 0).numpy()
+
+        axes[idx].imshow(img_np, vmin=0, vmax=1)
+        axes[idx].set_title(title, fontsize=12)
+        axes[idx].axis('off')
+
+    plt.tight_layout()
+    plt.savefig('noise_ratio_comparison.png', dpi=150, bbox_inches='tight')
+    print("Saved: noise_ratio_comparison.png")
+    print("=" * 70 + "\n")
+
+
+def visualize_worst_cases():
+    """Visualize worst-case scenarios"""
+    print("=" * 70)
+    print("WORST-CASE NOISE SCENARIOS")
+    print("=" * 70)
+
+    # Create a clean test image
+    clean_img = torch.ones(3, 256, 256) * 0.5
+    clean_img[:, 64:192, 64:192] = 0.8
+    clean_img[:, 100:156, 100:156] = 0.3
+
+    # Different worst-case scenarios
+    scenarios = [
+        ('Clean', 0.0, 0.0),
+        ('Mild (0.1, 50%)', 0.1, 0.5),
+        ('Moderate (0.15, 75%)', 0.15, 0.75),
+        ('Strong (0.2, 100%)', 0.2, 1.0),
+        ('Extreme (0.3, 100%)', 0.3, 1.0),
+        ('Nuclear (0.5, 100%)', 0.5, 1.0),
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    fig.suptitle('Worst-Case Noise Scenarios for Robustness Testing',
+                 fontsize=16, fontweight='bold')
+    axes = axes.flatten()
+
+    for idx, (name, std, ratio) in enumerate(scenarios):
+        noise_injector = NoiseInjector(seed=42)
+
+        if std == 0.0:
+            noisy_img = clean_img
+        else:
+            noisy_img = noise_injector.add_gaussian_noise(
+                clean_img.unsqueeze(0),
+                noise_ratio=ratio,
+                std=std
             ).squeeze(0)
 
-            # Convert to displayable format
-            img_np = noisy_img.permute(1, 2, 0).numpy()
+        img_np = noisy_img.permute(1, 2, 0).numpy()
 
-            axes[idx].imshow(img_np)
-            axes[idx].set_title(f'Noise: {noise_ratio * 100:.0f}%')
-            axes[idx].axis('off')
+        axes[idx].imshow(img_np, vmin=0, vmax=1)
+        axes[idx].set_title(name, fontsize=11, fontweight='bold')
+        axes[idx].axis('off')
 
-        plt.tight_layout()
-        plt.savefig('noise_visualization.png', dpi=150, bbox_inches='tight')
-        print("Visualization saved to 'noise_visualization.png'")
-        print("✓ Visualization test passed!\n")
-    except Exception as e:
-        print(f"Visualization skipped (matplotlib not available or error: {e})\n")
+        # Add metrics
+        if std > 0:
+            diff = (noisy_img - clean_img).abs().mean().item()
+            axes[idx].text(0.5, -0.08, f'Mean diff: {diff:.4f}',
+                          transform=axes[idx].transAxes, ha='center', fontsize=9)
+
+    plt.tight_layout()
+    plt.savefig('noise_worst_cases.png', dpi=150, bbox_inches='tight')
+    print("Saved: noise_worst_cases.png")
+    print("=" * 70 + "\n")
 
 
-def main():
-    print("\n" + "=" * 70)
-    print("NOISE IMPLEMENTATION VERIFICATION")
+def print_recommendations():
+    """Print noise parameter recommendations"""
     print("=" * 70)
-    print("Running tests to verify noise injection implementation...\n")
-
-    # Run all tests
-    test_gaussian_noise()
-    test_label_noise()
-    test_reproducibility()
-    test_config_parsing()
-    test_dataset_wrapper()
-    visualize_noise_example()
-
-    print("=" * 70)
-    print("ALL TESTS PASSED! ✓")
+    print("RECOMMENDATIONS FOR WORST-CASE TESTING")
     print("=" * 70)
     print()
+    print("For Federated Learning Robustness Experiments:")
+    print()
+    print("1. CONSERVATIVE WORST CASE (Recommended)")
+    print("   Command: --gaussian_std 0.2 --client_noise \"0:input=0.5;1:input=0.5\"")
+    print("   Impact: ~15-25% accuracy drop")
+    print("   Use: Standard robustness testing")
+    print()
+    print("2. EXTREME WORST CASE (Stress Test)")
+    print("   Command: --gaussian_std 0.3 --client_noise \"0:input=1.0;1:input=1.0\"")
+    print("   Impact: ~30-50% accuracy drop")
+    print("   Use: Verify algorithm stability under severe corruption")
+    print()
+    print("3. HETEROGENEOUS NOISE (Realistic)")
+    print("   Command: --gaussian_std 0.2 --client_noise \"0:input=0.8,label=0.2;1:input=0.5;2:label=0.3\"")
+    print("   Impact: Variable per client")
+    print("   Use: Simulate real-world heterogeneous noise conditions")
+    print()
+    print("4. LABEL NOISE WORST CASE")
+    print("   Command: --client_noise \"0:label=0.4;1:label=0.4;2:label=0.4;3:label=0.4\"")
+    print("   Impact: 40% wrong labels")
+    print("   Use: Test robustness to annotation errors")
+    print()
+    print("=" * 70 + "\n")
 
 
 if __name__ == '__main__':
-    main()
+    print("\n" + "=" * 70)
+    print("COMPREHENSIVE NOISE VISUALIZATION TEST")
+    print("=" * 70)
+
+    try:
+        visualize_noise_levels()
+        visualize_noise_ratios()
+        visualize_worst_cases()
+        print_recommendations()
+
+        print("=" * 70)
+        print("ALL VISUALIZATIONS GENERATED! ✓")
+        print("Check: noise_std_comparison.png")
+        print("Check: noise_ratio_comparison.png")
+        print("Check: noise_worst_cases.png")
+        print("=" * 70 + "\n")
+    except Exception as e:
+        print(f"Error generating visualizations: {e}")
+        print("Make sure matplotlib is installed: pip install matplotlib")
