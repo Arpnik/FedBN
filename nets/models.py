@@ -16,8 +16,10 @@ def get_norm(norm_type, num_features, num_groups=32, dim=2):
         return nn.GroupNorm(num_groups=num_groups, num_channels=num_features)
 
     elif norm_type == 'ln':
-        return nn.LayerNorm(num_features)
-
+        if dim == 2:
+            return nn.GroupNorm(num_groups=1, num_channels=num_features)
+        else:
+            return nn.LayerNorm(num_features)
     elif norm_type == 'none':
         return nn.Identity()
 
