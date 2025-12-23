@@ -195,12 +195,11 @@ def get_client_noise_config(client_idx, args):
     config = {
         'input_noise_ratio': 0.0,
         'label_noise_ratio': 0.0,
-        'mixed_domains': None,
         'gaussian_std': getattr(args, 'gaussian_std', 0.1)
     }
 
     # Parse client-specific noise configuration
-    # Format: --client_noise "0:input=0.2,label=0.0,mix=3;1:input=0.0,label=0.3,mix=2"
+    # Format: --client_noise "0:input=0.2,label=0.0;1:input=0.0,label=0.3"
     if hasattr(args, 'client_noise') and args.client_noise:
         noise_configs = args.client_noise.split(';')
         for noise_config in noise_configs:
@@ -225,16 +224,6 @@ def get_client_noise_config(client_idx, args):
                         config['input_noise_ratio'] = float(value)
                     elif key == 'label':
                         config['label_noise_ratio'] = float(value)
-                    elif key == 'mix':
-                        config['mixed_domains'] = int(value)
-
-    # Alternative: individual client arguments
-    if hasattr(args, f'client{client_idx}_input_noise'):
-        config['input_noise_ratio'] = getattr(args, f'client{client_idx}_input_noise')
-    if hasattr(args, f'client{client_idx}_label_noise'):
-        config['label_noise_ratio'] = getattr(args, f'client{client_idx}_label_noise')
-    if hasattr(args, f'client{client_idx}_mix_with'):
-        config['mixed_domains'] = getattr(args, f'client{client_idx}_mix_with')
 
     return config
 

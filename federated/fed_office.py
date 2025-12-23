@@ -392,7 +392,7 @@ def prepare_data_configurable(args):
     for client_idx, dataset_indices in enumerate(client_dataset_assignment):
         # Get noise config for this client
         config = get_client_noise_config(client_idx, args)
-
+        print(config)
         # Combine datasets if multiple assigned to this client
         if len(dataset_indices) == 1:
             ds_idx = dataset_indices[0]
@@ -543,30 +543,10 @@ def get_argument_parser():
     parser.add_argument('--client_noise', type=str, default='',
                         help='Client noise config: "0:input=0.2,label=0.0;1:input=0.0,label=0.3"')
 
-    # Method 2: Individual client arguments (alternative, more verbose)
-    parser.add_argument('--client0_input_noise', type=float, default=0.0,
-                        help='Input noise ratio for client 0 (Amazon)')
-    parser.add_argument('--client0_label_noise', type=float, default=0.0,
-                        help='Label noise ratio for client 0 (Amazon)')
     parser.add_argument('--client_datasets', type=str,
                         default='0:1:2:3',
                         help='Dataset assignment for each client. Format: "0:1:2:3" or "0,1:2:3" for multi-dataset clients. '
                              'Datasets: 0=Amazon, 1=Caltech, 2=DSLR, 3=Webcam')
-
-    parser.add_argument('--client1_input_noise', type=float, default=0.0,
-                        help='Input noise ratio for client 1 (Caltech)')
-    parser.add_argument('--client1_label_noise', type=float, default=0.0,
-                        help='Label noise ratio for client 1 (Caltech)')
-
-    parser.add_argument('--client2_input_noise', type=float, default=0.0,
-                        help='Input noise ratio for client 2 (DSLR)')
-    parser.add_argument('--client2_label_noise', type=float, default=0.0,
-                        help='Label noise ratio for client 2 (DSLR)')
-
-    parser.add_argument('--client3_input_noise', type=float, default=0.0,
-                        help='Input noise ratio for client 3 (Webcam)')
-    parser.add_argument('--client3_label_noise', type=float, default=0.0,
-                        help='Label noise ratio for client 3 (Webcam)')
 
     return parser.parse_args()
 
