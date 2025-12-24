@@ -77,6 +77,9 @@ python fed_office.py --mode fedbn
 
 #### Mixed-Domain Client Configuration
 
+In this work, *mixed-domain clients* refer to individual clients whose local datasets contain samples from multiple domains,
+introducing **intra-client data heterogeneity** rather than heterogeneity only across clients.
+
 | Argument | Description | Example |
 |--------|------------|---------|
 | `--client_datasets` | Dataset assignment per client | `"0,1:2:3"` |
@@ -150,7 +153,7 @@ in general.
 
 - FedBN is highly effective under **clean, single-domain client settings**
 - It remains robust to **asymmetric noise** when domain boundaries are preserved
-- Its advantages **break down under mixed-domain clients**
+- Its advantages **break down under mixed-domain clients**, i.e., when heterogeneity is introduced **within individual clients**
 - Performance gains do **not generalize to non-batch-based normalization methods**
 
 These findings clarify both the **strengths and limitations** of FedBN and motivate future work on:
