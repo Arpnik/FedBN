@@ -1,5 +1,4 @@
-## Extended Evaluation & Findings (This Repository)
-
+## Extended Evaluation & Findings for FedBN
 This repository builds upon the original work **FedBN: Federated Learning on Non-IID Features via Local Batch Normalization**
 by Li et al. (ICLR 2021).  
 All original ideas, formulations, and baseline contributions of FedBN are fully credited to the original authors.
@@ -22,13 +21,81 @@ In real-world federated systems, these assumptions are often violated. Clients m
 - Contain **asymmetric noise** (e.g., label noise, sensor noise)
 - Operate under mixed and evolving data distributions
 
-This repository extends the original experiments to examine **when FedBN’s advantages persist—and when they degrade**.
+This repository extends the original experiments to examine **when FedBN’s advantages persist and when they degrade**.
+
+---
+
+### Running the Experiments
+
+All experiments are conducted using the Office-Caltech and Office-Home benchmarks under different federated learning
+configurations.
+
+#### Datasets
+**office-caltech10**
+- Please download our pre-processed datasets [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/office_caltech_10_dataset.zip), put under `data/` directory and perform following commands:
+    ```bash
+    cd ./data
+    unzip office_caltech_10_dataset.zip
+    ```
+
+**office-home**
+- Please download the Office-Home dataset from [here](https://www.hemanthdv.org/officeHomeDataset.html), put under `data/` directory and ensure the folder is named `OfficeHomeDataset_10072016`.
+
+
+#### Federated Training
+
+The `--mode` argument specifies the federated learning strategy:
+- `fedavg`  — Federated Averaging  
+- `fedprox` — Federated Proximal  
+- `fedbn`   — Federated Batch Normalization  
+
+Example command to train FedBN on the Office-Caltech benchmark:
+
+```bash
+cd federated
+python fed_office.py --mode fedbn
+```
+##### Command-Line Arguments
+
+| Argument | Description | Example |
+|--------|------------|---------|
+| `--mode` | Federated learning method (`fedavg`, `fedprox`, `fedbn`) | `--mode fedbn` |
+| `--norm` | Normalization layer (`bn`, `gn`, `ln`, `none`) | `--norm bn` |
+| `--iters` | Number of communication rounds | `--iters 300` |
+| `--wk_iters` | Local optimization steps per round | `--wk_iters 1` |
+| `--lr` | Learning rate | `--lr 0.01` |
+| `--batch` | Batch size | `--batch 32` |
+
+#### Noise Configuration
+
+| Argument | Description | Example |
+|--------|------------|---------|
+| `--gaussian_std` | Standard deviation of Gaussian input noise | `--gaussian_std 0.5` |
+| `--client_noise` | Client-specific noise configuration | `"0:input=0.2,label=0.0;1:input=0.0,label=0.3"` |
+
+> The `--client_noise` flag allows different noise levels to be applied to different clients.
+
+#### Mixed-Domain Client Configuration
+
+| Argument | Description | Example |
+|--------|------------|---------|
+| `--client_datasets` | Dataset assignment per client | `"0,1:2:3"` |
+Clients are separated by `:` and multiple datasets assigned to the same client are separated by `,`.
+
+Dataset identifiers:
+- `0` = Amazon  
+- `1` = Caltech  
+- `2` = DSLR  
+- `3` = Webcam  
+
+This configuration enables evaluation under mixed-domain clients that violate the one-domain-per-client assumption.
 
 ---
 
 ### Summary of Findings
 
-Our experiments first reproduce the original FedBN results and then systematically extend them across three dimensions.
+Our experiments first reproduce the original FedBN results and then systematically extend them to evaluate robustness
+under noise, mixed-domain clients, and **generalization to unseen domains** using the Office-Home benchmark.
 
 #### 1. Reproduction of Original FedBN Results
 
