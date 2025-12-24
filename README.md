@@ -1,12 +1,13 @@
-## Extended Evaluation & Findings for FedBN
-This repository builds upon the original work **FedBN: Federated Learning on Non-IID Features via Local Batch Normalization**
-by Li et al. (ICLR 2021).  
-All original ideas, formulations, and baseline contributions of FedBN are fully credited to the original authors.
+# FedBN: Extended Evaluation under Realistic Federated Conditions
+**Extension of:** [FedBN: Federated Learning on Non-IID Features via Local Batch Normalization](link) (Li et al., ICLR 2021)
 
-The goal of this extension is **not to propose a new federated algorithm**, but to **critically evaluate the robustness and
-practical limitations of FedBN** under more realistic federated learning conditions that were not explored in the original
-paper.
+**Goal:** Evaluate FedBN's robustness under realistic conditions not covered in the original paper:
+- Mixed-domain clients (multiple domains per client)
+- Asymmetric client-side noise
+- Alternative normalization schemes
 
+**Key Finding:** 
+FedBN's advantages degrade when the one-domain-per-client assumption is violated.
 ---
 
 ### Motivation
@@ -40,7 +41,6 @@ configurations.
 
 **office-home**
 - Please download the Office-Home dataset from [here](https://www.hemanthdv.org/officeHomeDataset.html), put under `data/` directory and ensure the folder is named `OfficeHomeDataset_10072016`.
-
 
 #### Federated Training
 
@@ -134,6 +134,10 @@ performance differences between FedBN, FedAvg, and FedProx become marginal or un
 
 This highlights a critical dependency of FedBN on **domain-aligned client partitioning**.
 
+![Mixed client Ablation](assets/mixed-client-1.png)
+![Mixed client Ablation 2](assets/mixed-client-2.png)
+
+
 ---
 
 #### 4. Normalization Layer Ablation
@@ -147,6 +151,7 @@ FedBN’s performance gains are intrinsically tied to Batch Normalization. When 
 disappears, confirming that its effectiveness relies on preserving client-specific batch statistics rather than normalization
 in general.
 
+![Normalization Ablation](assets/normalisation.png)
 ---
 
 ### Key Takeaways
