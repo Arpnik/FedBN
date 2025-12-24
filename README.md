@@ -11,7 +11,9 @@
 - Alternative normalization schemes
 
 **Key Finding:** 
+
 FedBN's advantages degrade when the one-domain-per-client assumption is violated.
+
 ---
 
 ### Motivation
@@ -117,6 +119,7 @@ introducing **intra-client data heterogeneity** rather than heterogeneity only a
 | Argument | Description | Example |
 |--------|------------|---------|
 | `--client_datasets` | Dataset assignment per client | `"0,1:2:3"` |
+
 Clients are separated by `:` and multiple datasets assigned to the same client are separated by `,`.
 
 Dataset identifiers:
