@@ -1,121 +1,140 @@
-# FedBN: Federated Learning on Non-IID Features via Local Batch Normalization
-This is the PyTorch implemention of our paper **[FedBN: Federated Learning on Non-IID Features via Local Batch Normalization](https://openreview.net/pdf?id=6YEQUn0QICG)** by [Xiaoxiao Li](https://xxlya.github.io/xiaoxiao/), [Meirui Jiang](https://meiruijiang.github.io/MeiruiJiang/), Xiaofei Zhang, [Michael Kamp](https://michaelkamp.org/) and [Qi Dou](http://www.cse.cuhk.edu.hk/~qdou/)
-## Abstract
-> The emerging paradigm of federated learning (FL) strives to enable collaborative training of deep models on the network edge without centrally aggregating raw data and hence improving data privacy. In most cases, the assumption of independent and identically distributed samples across local clients does not hold for federated learning setups. Under this setting, neural network training performance may vary significantly according to the data distribution and even hurt training convergence. 
-Most of the previous work has focused on a difference in the distribution of labels. Unlike those settings, we address an important problem of FL, e.g., different scanner/sensors in medical imaging, different scenery distribution in autonomous driving (highway vs. city), where local clients may store examples with different marginal or conditional feature distributions compared to other nodes, which we denote as feature shift non-iid.  In this work, we propose an effective method that uses local batch normalization to alleviate the feature shift before averaging models. The resulting scheme, called FedBN, outperforms both classical FedAvg, as well as the state-of-the-art for non-iid data (FedProx) on our extensive experiments. These empirical results are supported by a convergence analysis that shows in a simplified setting that FedBN has a faster convergence rate in expectation than FedAvg.
+## Extended Evaluation & Findings (This Repository)
 
-![avatar](./assets/illustration.png)
-## Usage
-### Setup
-**pip**
+This repository builds upon the original work **FedBN: Federated Learning on Non-IID Features via Local Batch Normalization**
+by Li et al. (ICLR 2021).  
+All original ideas, formulations, and baseline contributions of FedBN are fully credited to the original authors.
 
-See the `requirements.txt` for environment configuration. 
-```bash
-pip install -r requirements.txt
-```
-**conda**
+The goal of this extension is **not to propose a new federated algorithm**, but to **critically evaluate the robustness and
+practical limitations of FedBN** under more realistic federated learning conditions that were not explored in the original
+paper.
 
-We recommend using conda to quick setup the environment. Please use the following commands.
-```bash
-conda env create -f environment.yaml
-conda activate fedbn
-```
-### Dataset & Pretrained Modeel
-**Benchmark(Digits)**
-- Please download our pre-processed datasets [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/digit_model.zip), put under `data/` directory and perform following commands:
-    ```bash
-    cd ./data
-    unzip digit_dataset.zip
-    ```
-- Please download our pretrained model [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/digit_dataset.zip) and put under `snapshots/` directory, perform following commands:
-    ```bash
-    cd ./snapshots
-    unzip digit_model.zip
-    ```
-    
-**office-caltech10**
-- Please download our pre-processed datasets [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/office_caltech_10_dataset.zip), put under `data/` directory and perform following commands:
-    ```bash
-    cd ./data
-    unzip office_caltech_10_dataset.zip
-    ```
-- Please download our pretrained model [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/office_caltech_10_model.zip) and put under `snapshots/` directory, perform following commands:
-    ```bash
-    cd ./snapshots
-    unzip office_caltech_10_model.zip
-    ```
-**DomainNet**
-- Please first download our splition [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/domainnet_dataset.zip), put under `data/` directory and perform following commands:
-    ```bash
-    cd ./data
-    unzip domainnet_dataset.zip
-    ```
-- then download dataset including: [Clipart](http://csr.bu.edu/ftp/visda/2019/multi-source/clipart.zip), [Infograph](http://csr.bu.edu/ftp/visda/2019/multi-source/infograph.zip), [Painting](http://csr.bu.edu/ftp/visda/2019/multi-source/painting.zip), [Quickdraw](http://csr.bu.edu/ftp/visda/2019/multi-source/quickdraw.zip), [Real](http://csr.bu.edu/ftp/visda/2019/multi-source/real.zip), [Sketch](http://csr.bu.edu/ftp/visda/2019/multi-source/sketch.zip), put under `data/DomainNet` directory and unzip them.
-    ```bash
-    cd ./data/DomainNet
-    unzip [filename].zip
-    ```
-- Please download our pretrained model [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/domainnet_model.zip) and put under `snapshots/` directory, perform following commands:
-    ```bash
-    cd ./snapshots
-    unzip domainnet_model.zip
-    ```
+---
 
-### Train
-Federated Learning
+### Motivation
 
-Please using following commands to train a model with federated learning strategy.
-- **--mode** specify federated learning strategy, option: fedavg | fedprox | fedbn 
-```bash
-cd federated
-# benchmark experiment
-python fed_digits.py --mode fedbn
+The original FedBN work demonstrates strong performance under *feature-shift non-IID settings*, assuming:
+- One domain per client
+- Clean local datasets
+- Domain-aligned Batch Normalization statistics
 
-# office-caltech-10 experiment
-python fed_office.py --mode fedbn
+In real-world federated systems, these assumptions are often violated. Clients may:
+- Collect data from **multiple domains over time**
+- Contain **asymmetric noise** (e.g., label noise, sensor noise)
+- Operate under mixed and evolving data distributions
 
-# DomaiNnet experiment
-python fed_domainnet.py --mode fedbn
-```
-SingleSet
+This repository extends the original experiments to examine **when FedBN’s advantages persist—and when they degrade**.
 
-Please using following commands to train a model using singleset data.
-- **--data** specify the single dataset
-```bash
-cd singleset 
-# benchmark experiment, --data option: svhn | usps | synth | mnistm | mnist
-python single_digits.py --data svhn
+---
 
-# office-caltech-10 experiment --data option: amazon | caltech | dslr | webcam
-python single_office.py --data amazon
+### Summary of Findings
 
-# DomaiNnet experiment --data option: clipart | infograph | painting | quickdraw | real | sketch
-python single_domainnet.py --data clipart
-```
+Our experiments first reproduce the original FedBN results and then systematically extend them across three dimensions.
 
-### Test
+#### 1. Reproduction of Original FedBN Results
 
-```bash
-cd federated
-# benchmark experiment
-python fed_digits.py --mode fedbn --test
+We faithfully reproduce the core results reported in the FedBN paper on the Office-Caltech benchmark, confirming that:
+- FedBN outperforms FedAvg and FedProx under clean, single-domain-per-client settings
+- Client-specific Batch Normalization effectively mitigates feature shift
 
-# office-caltech-10 experiment
-python fed_office.py --mode fedbn --test
+This validates the correctness of the implementation and establishes a reliable baseline.
 
-# DomaiNnet experiment
-python fed_domainnet.py --mode fedbn --test
-```
+---
 
-## Citation
-If you find the code and dataset useful, please cite our paper.
-```latex
-@inproceedings{
-li2021fedbn,
-title={Fed{\{}BN{\}}: Federated Learning on Non-{\{}IID{\}} Features via Local Batch Normalization},
-author={Xiaoxiao Li and Meirui Jiang and Xiaofei Zhang and Michael Kamp and Qi Dou},
-booktitle={International Conference on Learning Representations},
-year={2021},
-url={https://openreview.net/pdf?id=6YEQUn0QICG}
-}
-```
+#### 2. Robustness Under Asymmetric Client-Side Noise
+
+We introduce heterogeneous noise across clients, including:
+- Additive Gaussian input noise
+- Label noise with varying intensities
+
+**Key observation:**  
+FedBN remains robust when each client corresponds to a single domain, outperforming FedAvg and FedProx on most seen
+domains. This indicates that client-specific normalization can stabilize feature distributions even under noisy supervision.
+
+---
+
+#### 3. Mixed-Domain Clients (Violation of One-Domain-Per-Client Assumption)
+
+We evaluate FedBN in settings where individual clients contain data from **multiple domains**, violating a core assumption
+of the original method.
+
+**Key observation:**  
+FedBN’s advantage consistently degrades under mixed-domain clients. Batch Normalization statistics become entangled
+across heterogeneous feature distributions, weakening FedBN’s ability to isolate domain-specific shifts. In these settings,
+performance differences between FedBN, FedAvg, and FedProx become marginal or unstable.
+
+This highlights a critical dependency of FedBN on **domain-aligned client partitioning**.
+
+---
+
+#### 4. Normalization Layer Ablation
+
+We further analyze whether FedBN’s gains generalize beyond Batch Normalization by replacing BN with:
+- Group Normalization
+- Layer Normalization
+
+**Key observation:**  
+FedBN’s performance gains are intrinsically tied to Batch Normalization. When BN is replaced, FedBN’s advantage largely
+disappears, confirming that its effectiveness relies on preserving client-specific batch statistics rather than normalization
+in general.
+
+---
+
+### Key Takeaways
+
+- FedBN is highly effective under **clean, single-domain client settings**
+- It remains robust to **asymmetric noise** when domain boundaries are preserved
+- Its advantages **break down under mixed-domain clients**
+- Performance gains do **not generalize to non-batch-based normalization methods**
+
+These findings clarify both the **strengths and limitations** of FedBN and motivate future work on:
+- Domain-aware client modeling
+- Robust normalization strategies
+- Federated methods that explicitly handle intra-client heterogeneity
+
+---
+
+### Detailed Report
+
+A complete description of the experimental setup, datasets, noise configurations, ablation studies, and results is provided
+in the accompanying report included in this repository:
+
+📄 **[final-report.pdf](./final-report.pdf)**
+
+Readers interested in experimental details and quantitative analysis are encouraged to consult the report.
+
+---
+### Future Directions
+
+While this work provides a systematic evaluation of FedBN under more realistic federated settings, several limitations
+remain and motivate future research:
+
+- **Limited client heterogeneity modeling**: Mixed-domain clients are constructed using fixed domain mixtures. Future work
+  could study *dynamic domain drift*, where client data distributions evolve across communication rounds.
+
+
+- **Noise–domain interaction not exhaustively explored**: Although noise and domain mixing are evaluated independently,
+  their combined effect is not fully characterized. Further experiments could analyze compounding instability arising from
+  simultaneous noise and domain shift.
+
+
+- **Focus on vision benchmarks**: Experiments are limited to standard image-based domain adaptation datasets. Extending
+  this analysis to other modalities (e.g., text, speech, medical time-series) would test the generality of the findings.
+
+
+- **No algorithmic modification proposed**: This work focuses on evaluation rather than proposing a new method. Future
+  research could leverage these findings to design hybrid or adaptive normalization schemes that relax the one-domain-per-
+  client assumption.
+
+---
+
+### Attribution
+
+This work is an **extension and empirical evaluation** of the original FedBN method.  
+All core algorithmic ideas and original contributions belong to:
+
+> Xiaoxiao Li, Meirui Jiang, Xiaofei Zhang, Michael Kamp, Qi Dou  
+> *FedBN: Federated Learning on Non-IID Features via Local Batch Normalization*  
+> ICLR 2021
+
+This repository aims to complement the original work by exploring **practical robustness and failure modes** under
+realistic federated learning settings.
