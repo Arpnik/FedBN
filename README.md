@@ -37,7 +37,7 @@ This repository extends the original experiments to examine **when FedBN’s adv
 #### 1. Clone the repository
 
 ```bash 
-git clone https://github.com/Arpnik/EDU-Chunking-RAG.git
+git clone https://github.com/Arpnik/FedBN.git
 ```
 
 
