@@ -1,5 +1,9 @@
 # FedBN: Extended Evaluation under Realistic Federated Conditions
-**Extension of:** [FedBN: Federated Learning on Non-IID Features via Local Batch Normalization](link) (Li et al., ICLR 2021)
+
+
+[![Paper](https://img.shields.io/badge/Paper-PDF-red)](./final-report.pdf)
+
+**Extension of:** [FedBN: Federated Learning on Non-IID Features via Local Batch Normalization](https://openreview.net/forum?id=6YEQUn0QICG) (Li et al., ICLR 2021)
 
 **Goal:** Evaluate FedBN's robustness under realistic conditions not covered in the original paper:
 - Mixed-domain clients (multiple domains per client)
@@ -28,10 +32,40 @@ This repository extends the original experiments to examine **when FedBN’s adv
 
 ### Running the Experiments
 
+#### 1. Clone the repository
+
+```bash 
+git clone https://github.com/Arpnik/EDU-Chunking-RAG.git
+```
+
+
+#### 2. Create and activate a new environment
+
+```bash
+
+uv venv .venv
+source .venv/bin/activate   # macOS / Linux
+```
+
+#### OR
+```bash
+
+.venv\Scripts\activate      # Windows
+````
+
+
+#### 3. Install the Project Dependencies
+Make sure you run these commands from from folder with pyproject.toml file
+```bash
+
+uv pip install -e .
+````
+
+#### 4. Datasets
+
 All experiments are conducted using the Office-Caltech and Office-Home benchmarks under different federated learning
 configurations.
 
-#### Datasets
 **office-caltech10**
 - Please download our pre-processed datasets [here](https://huggingface.co/datasets/Jemary/FedBN_Dataset/blob/main/office_caltech_10_dataset.zip), put under `data/` directory and perform following commands:
     ```bash
@@ -42,7 +76,7 @@ configurations.
 **office-home**
 - Please download the Office-Home dataset from [here](https://www.hemanthdv.org/officeHomeDataset.html), put under `data/` directory and ensure the folder is named `OfficeHomeDataset_10072016`.
 
-#### Federated Training
+#### 5. Federated Training
 
 The `--mode` argument specifies the federated learning strategy:
 - `fedavg`  — Federated Averaging  
@@ -168,16 +202,6 @@ These findings clarify both the **strengths and limitations** of FedBN and motiv
 
 ---
 
-### Detailed Report
-
-A complete description of the experimental setup, datasets, noise configurations, ablation studies, and results is provided
-in the accompanying report included in this repository:
-
-📄 **[final-report.pdf](./final-report.pdf)**
-
-Readers interested in experimental details and quantitative analysis are encouraged to consult the report.
-
----
 ### Future Directions
 
 While this work provides a systematic evaluation of FedBN under more realistic federated settings, several limitations
